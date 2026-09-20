@@ -19,6 +19,7 @@ db.exec(`
     email TEXT UNIQUE,
     password_hash TEXT NOT NULL,
     city TEXT,
+    is_admin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -58,6 +59,16 @@ db.exec(`
   );
 `);
 
+// ترقية آمنة لقواعد بيانات قديمة كانت موجودة قبل إضافة عمود is_admin
+try {
+  const cols = db.prepare("PRAGMA table_info(users)").all();
+  if (!cols.some((c) => c.name === 'is_admin')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  }
+} catch (e) {
+  // تجاهل — العمود موجود مسبقًا أو الجدول جديد بالفعل
+}
+
 const CITIES = ['صنعاء', 'عدن', 'تعز', 'الحديدة', 'إب', 'مأرب', 'حضرموت', 'ذمار'];
 
 const CATEGORIES = [
@@ -81,6 +92,21 @@ function verifyPassword(password, stored) {
   const [salt, hash] = stored.split(':');
   const check = crypto.scryptSync(password, salt, 64).toString('hex');
   return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), Buffer.from(check, 'hex'));
+}
+
+const ADMIN_EMAIL = 'nassrataa4@gmail.com';
+const ADMIN_PHONE = '0537514314';
+const ADMIN_NAME = 'مالك الموقع';
+const ADMIN_DEFAULT_PASSWORD = 'Owner1234';
+
+function ensureAdminAccount() {
+  let row = db.prepare('SELECT id FROM users WHERE email = ?').get(ADMIN_EMAIL);
+  if (!row) {
+    db.prepare('INSERT INTO users (name, phone, email, password_hash, city, is_admin) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(ADMIN_NAME, ADMIN_PHONE, ADMIN_EMAIL, hashPassword(ADMIN_DEFAULT_PASSWORD), 'صنعاء');
+  } else {
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(row.id);
+  }
 }
 
 function seed() {
@@ -133,6 +159,8 @@ function seed() {
       insertListing.run(demoUserId, catBySlug(s.cat), s.title, s.desc, s.price, s.city, '777123456', s.featured, Math.floor(Math.random() * 800) + 30);
     }
   }
+
+  ensureAdminAccount();
 }
 
 seed();

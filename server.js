@@ -298,7 +298,7 @@ async function handleSettingsPost(req, res, user) {
   db.prepare('UPDATE users SET name = ?, phone = ?, email = ?, city = ? WHERE id = ?')
     .run(name, phone || null, email || null, city, user.id);
 
-  const refreshed = db.prepare('SELECT id, name, phone, email, city, created_at FROM users WHERE id = ?').get(user.id);
+  const refreshed = db.prepare('SELECT id, name, phone, email, city, is_admin, created_at FROM users WHERE id = ?').get(user.id);
   send(res, 200, pages.settingsPage({ user: refreshed, error: null, success: true, cities: CITIES }));
 }
 
@@ -345,6 +345,62 @@ async function handleDeleteListing(req, res, user, id) {
   redirect(res, '/dashboard');
 }
 
+async function handleAdminGet(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح لك بالدخول لهذه الصفحة'); return; }
+
+  const stats = {
+    users: db.prepare('SELECT COUNT(*) AS c FROM users').get().c,
+    listings: db.prepare('SELECT COUNT(*) AS c FROM listings').get().c,
+    activeListings: db.prepare("SELECT COUNT(*) AS c FROM listings WHERE status = 'active'").get().c,
+    views: db.prepare('SELECT COALESCE(SUM(views), 0) AS s FROM listings').get().s,
+  };
+
+  const listings = db.prepare(`
+    SELECT l.*, u.name AS owner_name, u.phone AS owner_phone, c.name AS category_name
+    FROM listings l
+    JOIN users u ON u.id = l.user_id
+    JOIN categories c ON c.id = l.category_id
+    ORDER BY l.created_at DESC
+  `).all().map(decorate);
+
+  const users = db.prepare('SELECT id, name, phone, email, city, is_admin, created_at FROM users ORDER BY created_at DESC').all();
+
+  send(res, 200, pages.adminPage({ user, stats, listings, users }));
+}
+
+async function handleAdminDeleteListing(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  const images = db.prepare('SELECT file FROM listing_images WHERE listing_id = ?').all(id);
+  images.forEach((img) => {
+    const p = path.join(UPLOADS_DIR, img.file);
+    if (fs.existsSync(p)) fs.unlinkSync(p);
+  });
+  db.prepare('DELETE FROM listing_images WHERE listing_id = ?').run(id);
+  db.prepare('DELETE FROM listings WHERE id = ?').run(id);
+  redirect(res, '/admin');
+}
+
+async function handleAdminDeleteUser(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  if (Number(id) === user.id) { send(res, 400, 'لا يمكنك حذف حسابك الخاص من هنا'); return; }
+  const listingIds = db.prepare('SELECT id FROM listings WHERE user_id = ?').all(id).map((r) => r.id);
+  listingIds.forEach((lid) => {
+    const images = db.prepare('SELECT file FROM listing_images WHERE listing_id = ?').all(lid);
+    images.forEach((img) => {
+      const p = path.join(UPLOADS_DIR, img.file);
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    });
+    db.prepare('DELETE FROM listing_images WHERE listing_id = ?').run(lid);
+  });
+  db.prepare('DELETE FROM listings WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(id);
+  redirect(res, '/admin');
+}
+
 // ---------- router ----------
 
 const server = http.createServer(async (req, res) => {
@@ -376,6 +432,9 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/settings' && m === 'GET') return handleSettingsGet(req, res, user, null, false);
     if (pathname === '/settings' && m === 'POST') return handleSettingsPost(req, res, user);
     if (pathname === '/settings/password' && m === 'POST') return handlePasswordPost(req, res, user);
+    if (pathname === '/admin' && m === 'GET') return handleAdminGet(req, res, user);
+    if (pathname.match(/^\/admin\/listing\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteListing(req, res, user, pathname.split('/')[3]);
+    if (pathname.match(/^\/admin\/user\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteUser(req, res, user, pathname.split('/')[3]);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
   } catch (err) {
