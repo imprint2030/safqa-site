@@ -365,6 +365,66 @@ function postAdPage({ user, categories, cities, error }) {
   return page({ title: 'إضافة إعلان', user, body });
 }
 
+function profileCard(user) {
+  return `
+  <div class="profile-card">
+    <div class="avatar" style="width:60px;height:60px;font-size:20px;">${esc((user.name || '؟').slice(0, 2))}</div>
+    <span style="font-size:15px;font-weight:800;">${esc(user.name)}</span>
+    <span style="font-size:11.5px;color:var(--text-2);">${esc(user.city || '')} · عضو منذ ${esc((user.created_at || '').slice(0, 4))}</span>
+  </div>`;
+}
+
+function dashNav(active) {
+  const item = (href, icon, label, key) =>
+    `<a href="${href}"${key === active ? ' class="active"' : ''}>${icon} ${label}</a>`;
+  return `
+  <div class="dash-nav">
+    ${item('/dashboard', icons.grid, 'إعلاناتي', 'ads')}
+    ${item('#', icons.message, 'الرسائل', 'messages')}
+    ${item('/settings', icons.settings, 'الإعدادات', 'settings')}
+    <form method="post" action="/logout" style="margin:0;"><button class="danger">${icons.logout} تسجيل الخروج</button></form>
+  </div>`;
+}
+
+function settingsPage({ user, error, success, cities }) {
+  const cityOptions = cities.map((c) => `<option${c === user.city ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  const body = `
+  ${header(user)}
+  <div class="zigzag" style="height:8px;"></div>
+  <div class="dash-layout container">
+    <div class="dash-side">
+      ${profileCard(user)}
+      ${dashNav('settings')}
+    </div>
+    <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;max-width:520px;">
+      <h1 style="margin:0;font-size:20px;font-weight:800;">الإعدادات</h1>
+      ${error ? `<div class="error-box">${esc(error)}</div>` : ''}
+      ${success ? `<div class="warn-box" style="background:#E6F1EC;border-color:#1A73E8;color:#124C8A;">${icons.info} <p style="margin:0;">تم حفظ التغييرات بنجاح.</p></div>` : ''}
+
+      <form method="post" action="/settings" class="card" style="gap:16px;">
+        <span style="font-size:15px;font-weight:800;">تعديل البيانات الشخصية</span>
+        <div class="field"><label>الاسم الكامل</label><input type="text" name="name" value="${esc(user.name)}" required></div>
+        <div class="field"><label>رقم الجوال</label>
+          <div class="phone-input"><span class="prefix">967+</span><input type="text" name="phone" value="${esc(user.phone || '')}" placeholder="7XX XXX XXX"></div>
+        </div>
+        <div class="field"><label>البريد الإلكتروني</label><input type="text" name="email" value="${esc(user.email || '')}" placeholder="example@email.com"></div>
+        <div class="field"><label>المحافظة</label><select name="city">${cityOptions}</select></div>
+        <button type="submit" class="btn-primary" style="align-self:flex-start;">حفظ التغييرات</button>
+      </form>
+
+      <form method="post" action="/settings/password" class="card" style="gap:16px;">
+        <span style="font-size:15px;font-weight:800;">تغيير كلمة المرور</span>
+        <div class="field"><label>كلمة المرور الحالية</label><input type="password" name="current_password" required></div>
+        <div class="field"><label>كلمة المرور الجديدة</label><input type="password" name="new_password" minlength="6" required></div>
+        <button type="submit" class="btn-outline" style="align-self:flex-start;">تحديث كلمة المرور</button>
+      </form>
+    </div>
+  </div>
+  ${footer()}
+  `;
+  return page({ title: 'الإعدادات', user, body });
+}
+
 function dashboardPage({ user, listings, stats }) {
   const rows = listings.length ? listings.map((l) => `
     <div class="ad-row">
@@ -385,17 +445,8 @@ function dashboardPage({ user, listings, stats }) {
   <div class="zigzag" style="height:8px;"></div>
   <div class="dash-layout container">
     <div class="dash-side">
-      <div class="profile-card">
-        <div class="avatar" style="width:60px;height:60px;font-size:20px;">${esc((user.name || '؟').slice(0, 2))}</div>
-        <span style="font-size:15px;font-weight:800;">${esc(user.name)}</span>
-        <span style="font-size:11.5px;color:var(--text-2);">${esc(user.city || '')} · عضو منذ ${esc((user.created_at || '').slice(0, 4))}</span>
-      </div>
-      <div class="dash-nav">
-        <a href="/dashboard" class="active">${icons.grid} إعلاناتي</a>
-        <a href="#">${icons.message} الرسائل</a>
-        <a href="#">${icons.settings} الإعدادات</a>
-        <form method="post" action="/logout" style="margin:0;"><button class="danger">${icons.logout} تسجيل الخروج</button></form>
-      </div>
+      ${profileCard(user)}
+      ${dashNav('ads')}
     </div>
     <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;">
       <div class="stat-grid">
@@ -415,4 +466,4 @@ function dashboardPage({ user, listings, stats }) {
   return page({ title: 'لوحة التحكم', user, body });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage };
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage };
