@@ -1,0 +1,14 @@
+{
+  "name": "safqa",
+  "version": "1.0.0",
+  "description": "صفقة — سوق يمني للإعلانات المبوبة",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node --experimental-sqlite server.js",
+    "dev": "node --experimental-sqlite server.js"
+  },
+  "dependencies": {}
+}
