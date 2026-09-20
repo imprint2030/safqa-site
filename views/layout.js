@@ -23,6 +23,7 @@ function header(user) {
       <button type="submit">بحث</button>
     </form>
     <a href="/post-ad" class="btn-accent">${icons.plus} أضف إعلان</a>
+    ${user && user.is_admin ? `<a href="/admin" class="nav-link" style="color:var(--price);">لوحة الإدارة</a>` : ''}
     ${user
       ? `<a href="/dashboard" class="nav-link">لوحة التحكم</a>`
       : `<a href="/login" class="nav-link">تسجيل الدخول</a>`

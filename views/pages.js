@@ -466,4 +466,65 @@ function dashboardPage({ user, listings, stats }) {
   return page({ title: 'لوحة التحكم', user, body });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage };
+function adminPage({ user, stats, listings, users }) {
+  const listingRows = listings.length ? listings.map((l) => `
+    <div class="ad-row">
+      <div class="thumb">${l.thumb ? `<img src="${esc(l.thumb)}">` : ''}</div>
+      <div class="info">
+        <a href="/listing/${l.id}">${esc(l.title)}</a>
+        <span class="sub">${esc(l.owner_name)} · ${esc(l.category_name)} · ${esc(l.city)}</span>
+      </div>
+      <span class="status-pill status-active">${l.status === 'active' ? 'نشط' : esc(l.status)}</span>
+      <span class="views">${l.views} مشاهدة</span>
+      <form method="post" action="/admin/listing/${l.id}/delete" onsubmit="return confirm('حذف هذا الإعلان نهائيًا؟');">
+        <button class="btn-mini danger">حذف</button>
+      </form>
+    </div>`).join('') : `<div style="padding:30px;text-align:center;color:var(--text-2);font-size:13.5px;">لا توجد إعلانات بعد.</div>`;
+
+  const userRows = users.length ? users.map((u) => `
+    <div class="ad-row">
+      <div class="info" style="flex-grow:1;">
+        <span style="font-weight:700;">${esc(u.name)}${u.is_admin ? ' <span style="color:var(--price);font-size:11.5px;">(مدير)</span>' : ''}</span>
+        <span class="sub">${esc(u.phone || '')} ${u.phone && u.email ? '·' : ''} ${esc(u.email || '')} · ${esc(u.city || '')}</span>
+      </div>
+      ${u.is_admin ? '' : `
+      <form method="post" action="/admin/user/${u.id}/delete" onsubmit="return confirm('حذف هذا المستخدم وكل إعلاناته نهائيًا؟');">
+        <button class="btn-mini danger">حذف</button>
+      </form>`}
+    </div>`).join('') : '';
+
+  const body = `
+  ${header(user)}
+  <div class="zigzag" style="height:8px;"></div>
+  <div class="dash-layout container">
+    <div class="dash-side">
+      ${profileCard(user)}
+      <div class="dash-nav">
+        <a href="/admin" class="active">${icons.grid} نظرة عامة</a>
+        <a href="/dashboard">${icons.settings} لوحة حسابي</a>
+      </div>
+    </div>
+    <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;">
+      <h1 style="margin:0;font-size:20px;font-weight:800;">لوحة الإدارة</h1>
+      <div class="stat-grid">
+        <div class="stat-card"><span class="label">إجمالي المستخدمين</span><span class="val">${stats.users}</span></div>
+        <div class="stat-card"><span class="label">إجمالي الإعلانات</span><span class="val">${stats.listings}</span></div>
+        <div class="stat-card"><span class="label">إعلانات نشطة</span><span class="val">${stats.activeListings}</span></div>
+        <div class="stat-card"><span class="label">مجموع المشاهدات</span><span class="val">${stats.views}</span></div>
+      </div>
+      <div class="my-ads">
+        <div class="head"><span>كل الإعلانات (${listings.length})</span></div>
+        ${listingRows}
+      </div>
+      <div class="my-ads">
+        <div class="head"><span>كل المستخدمين (${users.length})</span></div>
+        ${userRows}
+      </div>
+    </div>
+  </div>
+  ${footer()}
+  `;
+  return page({ title: 'لوحة الإدارة', user, body });
+}
+
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage };
