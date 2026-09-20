@@ -20,6 +20,10 @@ db.exec(`
     password_hash TEXT NOT NULL,
     city TEXT,
     is_admin INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'both',
+    id_document TEXT,
+    id_verified INTEGER NOT NULL DEFAULT 0,
+    prioritize_city INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -57,16 +61,39 @@ db.exec(`
     user_id INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS bids (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES listings(id),
+    buyer_id INTEGER NOT NULL REFERENCES users(id),
+    amount REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    listing_id INTEGER NOT NULL REFERENCES listings(id),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, listing_id)
+  );
 `);
 
-// ترقية آمنة لقواعد بيانات قديمة كانت موجودة قبل إضافة عمود is_admin
+// ترقية آمنة لقواعد بيانات قديمة كانت موجودة قبل إضافة الأعمدة/الجداول الجديدة
 try {
   const cols = db.prepare("PRAGMA table_info(users)").all();
-  if (!cols.some((c) => c.name === 'is_admin')) {
-    db.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
-  }
+  const names = cols.map((c) => c.name);
+  const addCol = (name, def) => {
+    if (!names.includes(name)) db.exec(`ALTER TABLE users ADD COLUMN ${name} ${def}`);
+  };
+  addCol('is_admin', "INTEGER NOT NULL DEFAULT 0");
+  addCol('role', "TEXT NOT NULL DEFAULT 'both'");
+  addCol('id_document', "TEXT");
+  addCol('id_verified', "INTEGER NOT NULL DEFAULT 0");
+  addCol('prioritize_city', "INTEGER NOT NULL DEFAULT 1");
 } catch (e) {
-  // تجاهل — العمود موجود مسبقًا أو الجدول جديد بالفعل
+  // تجاهل — الأعمدة موجودة مسبقًا أو الجدول جديد بالفعل
 }
 
 const CITIES = ['صنعاء', 'عدن', 'تعز', 'الحديدة', 'إب', 'مأرب', 'حضرموت', 'ذمار'];

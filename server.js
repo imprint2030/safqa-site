@@ -133,8 +133,9 @@ function serveStatic(req, res, urlPath) {
 
 async function handleHome(req, res, user) {
   const categories = categoryList();
-  const featured = db.prepare('SELECT * FROM listings WHERE status = ? ORDER BY featured DESC, created_at DESC LIMIT 8').all('active').map(decorate);
-  const recent = db.prepare('SELECT * FROM listings WHERE status = ? ORDER BY created_at DESC LIMIT 4').all('active').map(decorate);
+  const cityRank = user && user.prioritize_city && user.city ? `(CASE WHEN city = '${user.city.replace(/'/g, "''")}' THEN 0 ELSE 1 END), ` : '';
+  const featured = db.prepare(`SELECT * FROM listings WHERE status = ? ORDER BY featured DESC, ${cityRank}created_at DESC LIMIT 8`).all('active').map(decorate);
+  const recent = db.prepare(`SELECT * FROM listings WHERE status = ? ORDER BY ${cityRank}created_at DESC LIMIT 4`).all('active').map(decorate);
   send(res, 200, pages.homePage({ user, categories, featured, recent }));
 }
 
@@ -154,7 +155,7 @@ async function handleCategory(req, res, user, slug, query) {
   send(res, 200, pages.categoryPage({ user, category, listings, cities: CITIES, selectedCity: city || 'الكل' }));
 }
 
-async function handleListing(req, res, user, id) {
+async function handleListing(req, res, user, id, bidError) {
   const listing = db.prepare(`
     SELECT l.*, c.name AS category_name, c.slug AS category_slug,
            u.name AS seller_name, u.city AS seller_city, u.created_at AS seller_since
@@ -169,7 +170,10 @@ async function handleListing(req, res, user, id) {
   listing.time_ago = timeAgo(listing.created_at);
   const images = listingImages(id);
   const owner = user && user.id === listing.user_id;
-  send(res, 200, pages.listingPage({ user, listing, images, owner }));
+  const highestBid = db.prepare('SELECT MAX(amount) AS m FROM bids WHERE listing_id = ?').get(id).m;
+  const myBid = user ? db.prepare('SELECT * FROM bids WHERE listing_id = ? AND buyer_id = ? ORDER BY created_at DESC LIMIT 1').get(id, user.id) : null;
+  const isFavorited = user ? !!db.prepare('SELECT id FROM favorites WHERE user_id = ? AND listing_id = ?').get(user.id, id) : false;
+  send(res, 200, pages.listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError }));
 }
 
 async function handleLoginGet(req, res, user, error) {
@@ -268,9 +272,40 @@ async function handlePostAdPost(req, res, user) {
   redirect(res, `/listing/${info.lastInsertRowid}`);
 }
 
+const USER_FIELDS = 'id, name, phone, email, city, is_admin, role, id_document, id_verified, prioritize_city, created_at';
+
+function buildSettingsData(user, error, success) {
+  const sellerListings = db.prepare('SELECT * FROM listings WHERE user_id = ? ORDER BY created_at DESC').all(user.id).map(decorate);
+
+  const receivedBids = db.prepare(`
+    SELECT b.*, l.title AS listing_title, l.id AS listing_id, u.name AS buyer_name, u.phone AS buyer_phone
+    FROM bids b
+    JOIN listings l ON l.id = b.listing_id
+    JOIN users u ON u.id = b.buyer_id
+    WHERE l.user_id = ?
+    ORDER BY b.created_at DESC
+  `).all(user.id);
+
+  const favorites = db.prepare(`
+    SELECT l.* FROM favorites f JOIN listings l ON l.id = f.listing_id
+    WHERE f.user_id = ? ORDER BY f.created_at DESC
+  `).all(user.id).map(decorate);
+
+  const myBids = db.prepare(`
+    SELECT b.*, l.title AS listing_title, l.id AS listing_id, l.price AS listing_price, l.status AS listing_status,
+      (SELECT MAX(amount) FROM bids b2 WHERE b2.listing_id = b.listing_id) AS max_amount
+    FROM bids b
+    JOIN listings l ON l.id = b.listing_id
+    WHERE b.buyer_id = ?
+    ORDER BY b.created_at DESC
+  `).all(user.id);
+
+  return { user, error, success, cities: CITIES, sellerListings, receivedBids, favorites, myBids };
+}
+
 async function handleSettingsGet(req, res, user, error, success) {
   if (!user) { redirect(res, '/login'); return; }
-  send(res, 200, pages.settingsPage({ user, error, success, cities: CITIES }));
+  send(res, 200, pages.settingsPage(buildSettingsData(user, error, success)));
 }
 
 async function handleSettingsPost(req, res, user) {
@@ -280,26 +315,50 @@ async function handleSettingsPost(req, res, user) {
   const phone = (body.phone || '').trim();
   const email = (body.email || '').trim();
   const city = body.city || CITIES[0];
+  const role = ['seller', 'buyer', 'both'].includes(body.role) ? body.role : 'both';
+  const prioritizeCity = body.prioritize_city ? 1 : 0;
 
   if (!name) {
-    send(res, 400, pages.settingsPage({ user, error: 'الاسم مطلوب.', success: false, cities: CITIES }));
+    send(res, 400, pages.settingsPage(buildSettingsData(user, 'الاسم مطلوب.', false)));
     return;
   }
 
   if (phone) {
     const clash = db.prepare('SELECT id FROM users WHERE phone = ? AND id != ?').get(phone, user.id);
-    if (clash) { send(res, 409, pages.settingsPage({ user, error: 'رقم الجوال مستخدم من حساب آخر.', success: false, cities: CITIES })); return; }
+    if (clash) { send(res, 409, pages.settingsPage(buildSettingsData(user, 'رقم الجوال مستخدم من حساب آخر.', false))); return; }
   }
   if (email) {
     const clash = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, user.id);
-    if (clash) { send(res, 409, pages.settingsPage({ user, error: 'البريد الإلكتروني مستخدم من حساب آخر.', success: false, cities: CITIES })); return; }
+    if (clash) { send(res, 409, pages.settingsPage(buildSettingsData(user, 'البريد الإلكتروني مستخدم من حساب آخر.', false))); return; }
   }
 
-  db.prepare('UPDATE users SET name = ?, phone = ?, email = ?, city = ? WHERE id = ?')
-    .run(name, phone || null, email || null, city, user.id);
+  db.prepare('UPDATE users SET name = ?, phone = ?, email = ?, city = ?, role = ?, prioritize_city = ? WHERE id = ?')
+    .run(name, phone || null, email || null, city, role, prioritizeCity, user.id);
 
-  const refreshed = db.prepare('SELECT id, name, phone, email, city, is_admin, created_at FROM users WHERE id = ?').get(user.id);
-  send(res, 200, pages.settingsPage({ user: refreshed, error: null, success: true, cities: CITIES }));
+  const refreshed = db.prepare(`SELECT ${USER_FIELDS} FROM users WHERE id = ?`).get(user.id);
+  send(res, 200, pages.settingsPage(buildSettingsData(refreshed, null, true)));
+}
+
+async function handleVerifyPost(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const dataUrl = body.id_document_b64 || '';
+  const match = /^data:image\/(png|jpeg|jpg|webp);base64,(.+)$/.exec(dataUrl);
+  if (!match) {
+    send(res, 400, pages.settingsPage(buildSettingsData(user, 'الرجاء اختيار صورة صالحة للهوية (PNG أو JPG).', false)));
+    return;
+  }
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const buf = Buffer.from(match[2], 'base64');
+  if (buf.length > 3 * 1024 * 1024) {
+    send(res, 400, pages.settingsPage(buildSettingsData(user, 'حجم صورة الهوية كبير جدًا (الحد الأقصى 3 ميجابايت).', false)));
+    return;
+  }
+  const filename = `id-${user.id}-${Date.now()}.${ext}`;
+  fs.writeFileSync(path.join(UPLOADS_DIR, filename), buf);
+  db.prepare('UPDATE users SET id_document = ?, id_verified = 0 WHERE id = ?').run(filename, user.id);
+  const refreshed = db.prepare(`SELECT ${USER_FIELDS} FROM users WHERE id = ?`).get(user.id);
+  send(res, 200, pages.settingsPage(buildSettingsData(refreshed, null, true)));
 }
 
 async function handlePasswordPost(req, res, user) {
@@ -310,15 +369,62 @@ async function handlePasswordPost(req, res, user) {
   const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id);
 
   if (!row || !verifyPassword(current, row.password_hash)) {
-    send(res, 401, pages.settingsPage({ user, error: 'كلمة المرور الحالية غير صحيحة.', success: false, cities: CITIES }));
+    send(res, 401, pages.settingsPage(buildSettingsData(user, 'كلمة المرور الحالية غير صحيحة.', false)));
     return;
   }
   if (next.length < 6) {
-    send(res, 400, pages.settingsPage({ user, error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.', success: false, cities: CITIES }));
+    send(res, 400, pages.settingsPage(buildSettingsData(user, 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.', false)));
     return;
   }
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id);
-  send(res, 200, pages.settingsPage({ user, error: null, success: true, cities: CITIES }));
+  send(res, 200, pages.settingsPage(buildSettingsData(user, null, true)));
+}
+
+async function handleBidPost(req, res, user, listingId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId);
+  if (!listing) { send(res, 404, 'الإعلان غير موجود'); return; }
+  if (listing.user_id === user.id) { send(res, 400, 'لا يمكنك تقديم سومة على إعلانك الخاص'); return; }
+
+  const body = parseUrlEncoded(await readBody(req));
+  const amount = parseFloat((body.amount || '').toString().replace(/,/g, ''));
+  if (!amount || amount <= 0) {
+    return handleListing(req, res, user, listingId, 'الرجاء إدخال قيمة سومة صحيحة.');
+  }
+  db.prepare('INSERT INTO bids (listing_id, buyer_id, amount) VALUES (?, ?, ?)').run(listingId, user.id, amount);
+  redirect(res, `/listing/${listingId}`);
+}
+
+async function handleBidAccept(req, res, user, bidId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const bid = db.prepare(`
+    SELECT b.*, l.user_id AS seller_id FROM bids b JOIN listings l ON l.id = b.listing_id WHERE b.id = ?
+  `).get(bidId);
+  if (!bid || bid.seller_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare("UPDATE bids SET status = 'accepted' WHERE id = ?").run(bidId);
+  db.prepare("UPDATE bids SET status = 'rejected' WHERE listing_id = ? AND id != ? AND status = 'pending'").run(bid.listing_id, bidId);
+  redirect(res, '/settings');
+}
+
+async function handleBidReject(req, res, user, bidId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const bid = db.prepare(`
+    SELECT b.*, l.user_id AS seller_id FROM bids b JOIN listings l ON l.id = b.listing_id WHERE b.id = ?
+  `).get(bidId);
+  if (!bid || bid.seller_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare("UPDATE bids SET status = 'rejected' WHERE id = ?").run(bidId);
+  redirect(res, '/settings');
+}
+
+async function handleFavoriteToggle(req, res, user, listingId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const existing = db.prepare('SELECT id FROM favorites WHERE user_id = ? AND listing_id = ?').get(user.id, listingId);
+  if (existing) {
+    db.prepare('DELETE FROM favorites WHERE id = ?').run(existing.id);
+  } else {
+    db.prepare('INSERT INTO favorites (user_id, listing_id) VALUES (?, ?)').run(user.id, listingId);
+  }
+  redirect(res, `/listing/${listingId}`);
 }
 
 async function handleDashboard(req, res, user) {
@@ -364,9 +470,16 @@ async function handleAdminGet(req, res, user) {
     ORDER BY l.created_at DESC
   `).all().map(decorate);
 
-  const users = db.prepare('SELECT id, name, phone, email, city, is_admin, created_at FROM users ORDER BY created_at DESC').all();
+  const users = db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY created_at DESC`).all();
 
   send(res, 200, pages.adminPage({ user, stats, listings, users }));
+}
+
+async function handleAdminVerifyUser(req, res, user, id, verified) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare('UPDATE users SET id_verified = ? WHERE id = ?').run(verified ? 1 : 0, id);
+  redirect(res, '/admin');
 }
 
 async function handleAdminDeleteListing(req, res, user, id) {
@@ -432,9 +545,16 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/settings' && m === 'GET') return handleSettingsGet(req, res, user, null, false);
     if (pathname === '/settings' && m === 'POST') return handleSettingsPost(req, res, user);
     if (pathname === '/settings/password' && m === 'POST') return handlePasswordPost(req, res, user);
+    if (pathname === '/settings/verify' && m === 'POST') return handleVerifyPost(req, res, user);
+    if (pathname.match(/^\/listing\/\d+\/bid$/) && m === 'POST') return handleBidPost(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/bid\/\d+\/accept$/) && m === 'POST') return handleBidAccept(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/bid\/\d+\/reject$/) && m === 'POST') return handleBidReject(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/favorites\/\d+\/toggle$/) && m === 'POST') return handleFavoriteToggle(req, res, user, pathname.split('/')[2]);
     if (pathname === '/admin' && m === 'GET') return handleAdminGet(req, res, user);
     if (pathname.match(/^\/admin\/listing\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteListing(req, res, user, pathname.split('/')[3]);
     if (pathname.match(/^\/admin\/user\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteUser(req, res, user, pathname.split('/')[3]);
+    if (pathname.match(/^\/admin\/user\/\d+\/verify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], true);
+    if (pathname.match(/^\/admin\/user\/\d+\/unverify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], false);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
   } catch (err) {

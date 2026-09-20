@@ -16,7 +16,7 @@ function getUserFromSession(id) {
   if (!id) return null;
   const row = db.prepare('SELECT user_id FROM sessions WHERE id = ?').get(id);
   if (!row) return null;
-  return db.prepare('SELECT id, name, phone, email, city, is_admin, created_at FROM users WHERE id = ?').get(row.user_id);
+  return db.prepare('SELECT id, name, phone, email, city, is_admin, role, id_document, id_verified, prioritize_city, created_at FROM users WHERE id = ?').get(row.user_id);
 }
 
 function parseCookies(req) {
