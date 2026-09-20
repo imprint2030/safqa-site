@@ -264,6 +264,59 @@ async function handlePostAdPost(req, res, user) {
   redirect(res, `/listing/${info.lastInsertRowid}`);
 }
 
+async function handleSettingsGet(req, res, user, error, success) {
+  if (!user) { redirect(res, '/login'); return; }
+  send(res, 200, pages.settingsPage({ user, error, success, cities: CITIES }));
+}
+
+async function handleSettingsPost(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const name = (body.name || '').trim();
+  const phone = (body.phone || '').trim();
+  const email = (body.email || '').trim();
+  const city = body.city || CITIES[0];
+
+  if (!name) {
+    send(res, 400, pages.settingsPage({ user, error: 'الاسم مطلوب.', success: false, cities: CITIES }));
+    return;
+  }
+
+  if (phone) {
+    const clash = db.prepare('SELECT id FROM users WHERE phone = ? AND id != ?').get(phone, user.id);
+    if (clash) { send(res, 409, pages.settingsPage({ user, error: 'رقم الجوال مستخدم من حساب آخر.', success: false, cities: CITIES })); return; }
+  }
+  if (email) {
+    const clash = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email, user.id);
+    if (clash) { send(res, 409, pages.settingsPage({ user, error: 'البريد الإلكتروني مستخدم من حساب آخر.', success: false, cities: CITIES })); return; }
+  }
+
+  db.prepare('UPDATE users SET name = ?, phone = ?, email = ?, city = ? WHERE id = ?')
+    .run(name, phone || null, email || null, city, user.id);
+
+  const refreshed = db.prepare('SELECT id, name, phone, email, city, created_at FROM users WHERE id = ?').get(user.id);
+  send(res, 200, pages.settingsPage({ user: refreshed, error: null, success: true, cities: CITIES }));
+}
+
+async function handlePasswordPost(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const current = body.current_password || '';
+  const next = body.new_password || '';
+  const row = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(user.id);
+
+  if (!row || !verifyPassword(current, row.password_hash)) {
+    send(res, 401, pages.settingsPage({ user, error: 'كلمة المرور الحالية غير صحيحة.', success: false, cities: CITIES }));
+    return;
+  }
+  if (next.length < 6) {
+    send(res, 400, pages.settingsPage({ user, error: 'كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل.', success: false, cities: CITIES }));
+    return;
+  }
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(next), user.id);
+  send(res, 200, pages.settingsPage({ user, error: null, success: true, cities: CITIES }));
+}
+
 async function handleDashboard(req, res, user) {
   if (!user) { redirect(res, '/login'); return; }
   const rows = db.prepare('SELECT * FROM listings WHERE user_id = ? ORDER BY created_at DESC').all(user.id).map(decorate);
@@ -316,6 +369,9 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/post-ad' && m === 'GET') return handlePostAdGet(req, res, user);
     if (pathname === '/post-ad' && m === 'POST') return handlePostAdPost(req, res, user);
     if (pathname === '/dashboard' && m === 'GET') return handleDashboard(req, res, user);
+    if (pathname === '/settings' && m === 'GET') return handleSettingsGet(req, res, user, null, false);
+    if (pathname === '/settings' && m === 'POST') return handleSettingsPost(req, res, user);
+    if (pathname === '/settings/password' && m === 'POST') return handlePasswordPost(req, res, user);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
   } catch (err) {
