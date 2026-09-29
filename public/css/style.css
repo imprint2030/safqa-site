@@ -298,4 +298,63 @@ button, input, select, textarea { font-family: inherit; }
   .filters, .listing-sidebar, .dash-side { width: 100%; }
   .site-header { flex-wrap: wrap; height: auto; padding: 12px 20px; }
   .search-bar { order: 3; max-width: 100%; }
+  .listing-sidebar { position: static; }
+
+  .container, .section, .breadcrumb, .cat-layout, .listing-layout, .dash-layout, .postad-wrap {
+    padding-left: 18px; padding-right: 18px;
+  }
+  .cat-nav { padding: 0 18px; }
+  .hero { padding: 36px 20px; }
+  .hero h1 { font-size: 25px; }
+  .hero p { font-size: 13.5px; }
+  .hero-stats { flex-wrap: wrap; gap: 16px; }
+  .specs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gallery-thumbs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .img-previews { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .footer-cols { flex-direction: column; gap: 22px; }
+  .gallery-main { height: 260px; }
+
+  .ad-row { flex-wrap: wrap; row-gap: 10px; }
+  .ad-row .info { min-width: 160px; }
+  .ad-row .views { width: auto; }
+}
+
+@media (max-width: 520px) {
+  .cat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .cat-card { padding: 14px 8px; }
+  .listing-grid, .listing-grid.cols-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .listing-card .thumb { height: 120px; }
+  .listing-card .body { padding: 10px; gap: 4px; }
+  .listing-card .title { font-size: 13px; }
+  .listing-card .price { font-size: 14.5px; }
+
+  .site-header { padding: 10px 14px; gap: 10px; }
+  .logo-text { font-size: 19px; }
+  .btn-accent span.label { display: none; }
+  .nav-link { font-size: 12.5px; }
+
+  .hero h1 { font-size: 21px; }
+  .hero-stats { gap: 10px 18px; }
+
+  .auth-wrap { padding: 18px; }
+  .auth-card { padding: 22px; }
+  .postad-wrap { padding-top: 18px; }
+
+  .listing-title-row h1 { font-size: 17px; }
+  .detail-price { font-size: 21px; }
+  .detail-meta { gap: 10px 14px; }
+  .specs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .gallery-main { height: 200px; }
+  .gallery-thumbs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .dash-layout { padding-top: 18px; }
+  .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .stat-card { padding: 12px; }
+  .stat-card .val { font-size: 18px; }
+  .tabs { flex-wrap: wrap; }
+  .tab-btn { min-width: 44%; }
+
+  .ad-row { padding: 12px 14px; gap: 10px; }
+  .ad-row .thumb { width: 52px; height: 40px; }
 }
