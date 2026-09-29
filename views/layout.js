@@ -10,7 +10,19 @@ function esc(str) {
     .replace(/'/g, '&#39;');
 }
 
+const NAV_CATEGORIES = [
+  { name: 'سيارات', slug: 'cars' },
+  { name: 'عقارات', slug: 'realestate' },
+  { name: 'إلكترونيات وجوالات', slug: 'electronics' },
+  { name: 'أثاث ومستلزمات منزلية', slug: 'furniture' },
+  { name: 'خدمات', slug: 'services' },
+  { name: 'وظائف', slug: 'jobs' },
+  { name: 'مشاريع واستثمارات', slug: 'investments' },
+  { name: 'مفقودات', slug: 'lost' },
+];
+
 function header(user) {
+  const catLinks = NAV_CATEGORIES.map((c) => `<a href="/category/${c.slug}">${esc(c.name)}</a>`).join('');
   return `
   <header class="site-header">
     <a href="/" class="logo">
@@ -29,6 +41,7 @@ function header(user) {
       : `<a href="/login" class="nav-link">تسجيل الدخول</a>`
     }
   </header>
+  <nav class="cat-nav">${catLinks}</nav>
   <div class="zigzag"></div>`;
 }
 

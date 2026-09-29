@@ -165,7 +165,7 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
           </div>
         </div>
         <button id="revealBtn" class="btn-reveal" style="background:var(--primary);">${icons.callPhone}<span id="revealLabel">إظهار رقم الجوال</span></button>
-        <button class="btn-msg">${icons.message} مراسلة البائع</button>
+        <a href="https://wa.me/967${esc(listing.phone.replace(/^0+/, '').replace(/\s+/g, ''))}?text=${encodeURIComponent('السلام عليكم، أنا مهتم بإعلانك "' + listing.title + '" في صفقة')}" target="_blank" class="btn-msg" style="background:#25D366;color:#fff;border-color:#25D366;">${icons.whatsapp} تواصل عبر واتساب</a>
       </div>
       ${bidSection}
       <div class="warn-box">${icons.info}<p style="margin:0;">لا تدفع أي مبلغ مقدمًا قبل معاينة السلعة، وتجنّب التحويل البنكي لأشخاص غير موثوقين. تعامل داخل موقع صفقة فقط.</p></div>
