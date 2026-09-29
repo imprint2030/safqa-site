@@ -91,6 +91,18 @@ button, input, select, textarea { font-family: inherit; }
 }
 .nav-link { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
 
+.cat-nav {
+  display: flex; align-items: center; gap: 4px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 0 32px; overflow-x: auto; white-space: nowrap;
+}
+.cat-nav a {
+  font-size: 13px; font-weight: 600; color: var(--text-2);
+  padding: 10px 12px; border-bottom: 2px solid transparent; flex-shrink: 0;
+}
+.cat-nav a:hover { color: var(--primary); border-bottom-color: var(--primary); }
+.cat-nav::-webkit-scrollbar { height: 0; }
+
 /* Hero */
 .hero {
   background: linear-gradient(135deg, #8D493A 0%, #6B3527 100%);
