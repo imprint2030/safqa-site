@@ -34,7 +34,7 @@ function header(user) {
       <input type="text" name="q" placeholder="ابحث عن سيارات، عقارات، جوالات...">
       <button type="submit">بحث</button>
     </form>
-    <a href="/post-ad" class="btn-accent">${icons.plus} أضف إعلان</a>
+    <a href="/post-ad" class="btn-accent">${icons.plus}<span class="label">أضف إعلان</span></a>
     ${user && user.is_admin ? `<a href="/admin" class="nav-link" style="color:var(--price);">لوحة الإدارة</a>` : ''}
     ${user
       ? `<a href="/dashboard" class="nav-link">لوحة التحكم</a>`
