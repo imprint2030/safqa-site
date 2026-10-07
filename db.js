@@ -78,6 +78,15 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(user_id, listing_id)
   );
+
+  CREATE TABLE IF NOT EXISTS saved_searches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    category_id INTEGER NOT NULL REFERENCES categories(id),
+    category_name TEXT NOT NULL,
+    city TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // ترقية آمنة لقواعد بيانات قديمة كانت موجودة قبل إضافة الأعمدة/الجداول الجديدة
@@ -96,6 +105,14 @@ try {
   // تجاهل — الأعمدة موجودة مسبقًا أو الجدول جديد بالفعل
 }
 
+try {
+  const lcols = db.prepare("PRAGMA table_info(listings)").all();
+  const lnames = lcols.map((c) => c.name);
+  if (!lnames.includes('extra_fields')) db.exec("ALTER TABLE listings ADD COLUMN extra_fields TEXT");
+} catch (e) {
+  // تجاهل
+}
+
 const CITIES = ['صنعاء', 'عدن', 'تعز', 'الحديدة', 'إب', 'مأرب', 'حضرموت', 'ذمار'];
 
 const CATEGORIES = [
@@ -108,6 +125,52 @@ const CATEGORIES = [
   { name: 'مشاريع واستثمارات', slug: 'investments', icon: 'chart' },
   { name: 'مفقودات', slug: 'lost', icon: 'search' }
 ];
+
+// حقول تخصصية حسب نوع الفئة — تُعرض ديناميكيًا في نموذج إضافة الإعلان وصفحة التفاصيل
+const CATEGORY_FIELDS = {
+  cars: [
+    { key: 'make', label: 'الشركة المصنعة', type: 'text', placeholder: 'تويوتا، هيونداي...' },
+    { key: 'model', label: 'الموديل', type: 'text', placeholder: 'كامري، النترا...' },
+    { key: 'year', label: 'سنة الصنع', type: 'number', placeholder: '2019' },
+    { key: 'km', label: 'المسافة المقطوعة (كم)', type: 'number', placeholder: '50000' },
+    { key: 'transmission', label: 'ناقل الحركة', type: 'select', options: ['أوتوماتيك', 'مانيوال'] },
+    { key: 'fuel', label: 'نوع الوقود', type: 'select', options: ['بنزين', 'ديزل', 'هايبرد', 'كهربائي'] },
+  ],
+  realestate: [
+    { key: 'listing_type', label: 'نوع العرض', type: 'select', options: ['بيع', 'إيجار'] },
+    { key: 'property_type', label: 'نوع العقار', type: 'select', options: ['شقة', 'فيلا', 'أرض', 'محل تجاري', 'مكتب'] },
+    { key: 'rooms', label: 'عدد الغرف', type: 'number', placeholder: '3' },
+    { key: 'area', label: 'المساحة (م²)', type: 'number', placeholder: '150' },
+    { key: 'floor', label: 'الطابق', type: 'text', placeholder: 'الثاني' },
+  ],
+  electronics: [
+    { key: 'brand', label: 'الماركة', type: 'text', placeholder: 'آبل، سامسونج...' },
+    { key: 'condition', label: 'الحالة', type: 'select', options: ['جديد', 'مستعمل - كحالة الجديد', 'مستعمل'] },
+    { key: 'warranty', label: 'الضمان', type: 'select', options: ['يوجد ضمان', 'لا يوجد ضمان'] },
+  ],
+  furniture: [
+    { key: 'material', label: 'الخامة', type: 'text', placeholder: 'خشب، معدن...' },
+    { key: 'condition', label: 'الحالة', type: 'select', options: ['جديد', 'مستعمل'] },
+  ],
+  services: [
+    { key: 'service_type', label: 'نوع الخدمة', type: 'text', placeholder: 'صيانة، نقل عفش...' },
+    { key: 'availability', label: 'التوفر', type: 'text', placeholder: 'على مدار الأسبوع' },
+  ],
+  jobs: [
+    { key: 'job_type', label: 'نوع الوظيفة', type: 'select', options: ['دوام كامل', 'دوام جزئي', 'عقد مؤقت', 'عن بعد'] },
+    { key: 'salary', label: 'الراتب المتوقع', type: 'text', placeholder: 'حسب الاتفاق' },
+    { key: 'experience', label: 'الخبرة المطلوبة', type: 'text', placeholder: '3 سنوات' },
+  ],
+  investments: [
+    { key: 'sector', label: 'القطاع', type: 'text', placeholder: 'عقاري، تجاري...' },
+    { key: 'capital', label: 'رأس المال المطلوب', type: 'text', placeholder: '10,000,000 ر.ي' },
+  ],
+  lost: [
+    { key: 'item_type', label: 'نوع الشيء/الحيوان', type: 'text', placeholder: 'قطة، محفظة...' },
+    { key: 'lost_date', label: 'تاريخ الفقدان', type: 'text', placeholder: '2026-10-01' },
+    { key: 'lost_location', label: 'آخر مكان شوهد فيه', type: 'text', placeholder: 'حي السبعين' },
+  ],
+};
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -192,4 +255,4 @@ function seed() {
 
 seed();
 
-module.exports = { db, CITIES, CATEGORIES, hashPassword, verifyPassword };
+module.exports = { db, CITIES, CATEGORIES, CATEGORY_FIELDS, hashPassword, verifyPassword };
