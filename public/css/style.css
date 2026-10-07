@@ -12,15 +12,24 @@
   --border: #E8DFD3;
   --chip: #F1E4DA;
   --chip-blue: #E3EDFC;
+  /* ألوان الزجاج الملوّن في النوافذ القمرية الصنعانية — تُستخدم كلمسات هوية بصرية */
+  --jewel-emerald: #1F8A6F;
+  --jewel-amber: #D9A62B;
+  --jewel-sapphire: #1A73E8;
+  --jewel-ruby: #B23A2E;
 }
 
 * { box-sizing: border-box; }
 
+/* نقش جصي خفيف جدًا في خلفية الموقع — يستحضر زخرفة النوافذ الصنعانية بدون التأثير على القراءة */
 body {
   margin: 0;
   font-family: 'Tajawal', sans-serif;
-  background: var(--bg);
   color: var(--text);
+  background-color: var(--bg);
+  background-image: radial-gradient(circle at 0 0, rgba(141,73,58,0.05) 0, transparent 55%),
+    radial-gradient(circle at 100% 0, rgba(141,73,58,0.04) 0, transparent 55%);
+  background-attachment: fixed;
 }
 
 a { color: inherit; text-decoration: none; }
@@ -42,6 +51,26 @@ button, input, select, textarea { font-family: inherit; }
   background-position: -5px 0, -5px 0, 0 0, 0 0;
   background-size: 10px 10px;
   background-repeat: repeat-x;
+}
+
+/* نسخة ملوّنة من الفاصل الهندسي — بألوان الزجاج القمري، تُستخدم كلمسة مميزة أسفل الهيدر */
+.zigzag.jewel {
+  height: 6px;
+  background-image: repeating-linear-gradient(90deg,
+    var(--jewel-emerald) 0 16px,
+    var(--jewel-amber) 16px 32px,
+    var(--jewel-sapphire) 32px 48px,
+    var(--jewel-ruby) 48px 64px);
+  background-position: 0 0;
+  background-size: auto;
+}
+
+/* شريط شرافات (عناصر زخرفية مستطيلة مستوحاة من أسطح المباني الصنعانية — تتصل بخلفية الفوتر الداكنة) */
+.merlon-strip {
+  height: 13px;
+  background-color: var(--bg);
+  background-image: linear-gradient(90deg, #2D2018 50%, transparent 50%);
+  background-size: 26px 100%;
 }
 
 /* Header */
@@ -103,10 +132,14 @@ button, input, select, textarea { font-family: inherit; }
 .cat-nav a:hover { color: var(--primary); border-bottom-color: var(--primary); }
 .cat-nav::-webkit-scrollbar { height: 0; }
 
-/* Hero */
+/* Hero — خلفية متدرجة بلون الطوب الصنعاني مع نقش أقواس قمرية شفافة */
 .hero {
-  background: linear-gradient(135deg, #8D493A 0%, #6B3527 100%);
+  background:
+    linear-gradient(135deg, rgba(141,73,58,0.97) 0%, rgba(107,53,39,0.97) 100%),
+    repeating-linear-gradient(90deg, transparent 0 34px, rgba(255,255,255,0.07) 34px 36px),
+    radial-gradient(ellipse 50px 60px at 50% 100%, rgba(255,255,255,0.14) 0%, transparent 70%) 0 0/70px 100% repeat-x;
   padding: 48px 32px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center;
+  position: relative;
 }
 .hero h1 { margin: 0; font-size: 32px; font-weight: 800; color: #fff; }
 .hero p { margin: 0; font-size: 15px; color: #F0E1D8; max-width: 600px; }
@@ -129,7 +162,8 @@ button, input, select, textarea { font-family: inherit; }
   background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 10px; text-align: center;
 }
 .cat-card .ico {
-  width: 50px; height: 50px; border-radius: 13px; background: var(--chip);
+  width: 50px; height: 46px; border-radius: 25px 25px 7px 7px; background: var(--chip);
+  border: 1.5px solid var(--border);
   display: flex; align-items: center; justify-content: center; color: var(--primary);
 }
 .cat-card span { font-size: 13.5px; font-weight: 700; }
@@ -243,6 +277,7 @@ button, input, select, textarea { font-family: inherit; }
 .drop-zone { border: 2px dashed var(--border); border-radius: 12px; padding: 28px; display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--bg); cursor: pointer; }
 .drop-zone span.hint { font-size: 12px; color: var(--text-2); }
 .img-previews { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.extra-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .img-previews .prev { position: relative; height: 74px; border-radius: 8px; overflow: hidden; background: #F0E9DB; }
 .img-previews .prev img { width: 100%; height: 100%; object-fit: cover; }
 .img-previews .prev button { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; border: none; background: rgba(0,0,0,0.55); color: #fff; font-size: 12px; cursor: pointer; }
@@ -290,6 +325,43 @@ button, input, select, textarea { font-family: inherit; }
 
 /* Icons */
 .icon { display: inline-flex; }
+
+/* حالات فارغة — رسالة ودّية مع أيقونة بدل نص باهت */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  padding: 48px 24px; text-align: center; color: var(--text-2);
+}
+.empty-state .empty-ico { color: var(--border); }
+.empty-state p { margin: 0; font-size: 13.5px; max-width: 320px; }
+
+/* مشاركة الإعلان */
+.share-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.share-label { font-size: 11.5px; color: var(--text-2); margin-left: 2px; }
+.share-btn {
+  width: 32px; height: 32px; border-radius: 50%; background: var(--chip); color: var(--primary);
+  border: none; display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+}
+.share-btn:hover { background: var(--border); }
+
+/* تكبير الصور Lightbox */
+.lightbox-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(15,10,8,0.92); z-index: 999;
+  align-items: center; justify-content: center;
+}
+.lightbox-overlay.open { display: flex; }
+.lightbox-overlay img { max-width: 88vw; max-height: 85vh; border-radius: 10px; object-fit: contain; }
+.lightbox-btn {
+  position: absolute; top: 50%; transform: translateY(-50%); background: rgba(255,255,255,0.12); color: #fff;
+  border: none; border-radius: 50%; width: 46px; height: 46px; display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.lightbox-btn:hover { background: rgba(255,255,255,0.22); }
+.lightbox-prev { right: 18px; }
+.lightbox-next { left: 18px; }
+.lightbox-close { top: 22px; transform: none; right: 18px; left: auto; }
+
+/* زر "تثبيت كمميز" في لوحة الإدارة */
+.btn-mini[style*="D9A62B"] { border: none; }
 
 @media (max-width: 900px) {
   .cat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -347,6 +419,9 @@ button, input, select, textarea { font-family: inherit; }
   .specs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .gallery-main { height: 200px; }
   .gallery-thumbs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .extra-grid { grid-template-columns: 1fr; }
+  .lightbox-btn { width: 38px; height: 38px; }
+  .lightbox-prev { right: 8px; } .lightbox-next { left: 8px; } .lightbox-close { right: 8px; top: 12px; }
 
   .dash-layout { padding-top: 18px; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
