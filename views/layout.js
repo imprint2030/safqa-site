@@ -55,6 +55,7 @@ function header(user) {
     </form>
     <a href="/post-ad" class="btn-accent">${icons.plus}<span class="label">أضف إعلان</span></a>
     ${user && user.is_admin ? `<a href="/admin" class="nav-link" style="color:var(--price);">لوحة الإدارة</a>` : ''}
+    ${user ? `<a href="/messages" class="nav-link" style="position:relative;">${icons.message}<span class="label">الرسائل</span>${user.unreadMessages ? `<span style="position:absolute;top:-4px;left:-8px;background:#B23A2E;color:#fff;font-size:10px;font-weight:800;border-radius:20px;min-width:16px;height:16px;display:flex;align-items:center;justify-content:center;padding:0 3px;">${user.unreadMessages}</span>` : ''}</a>` : ''}
     ${user
       ? `<a href="/dashboard" class="nav-link">لوحة التحكم</a>`
       : `<a href="/login" class="nav-link">تسجيل الدخول</a>`

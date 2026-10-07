@@ -341,6 +341,11 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
         </div>
         <button id="revealBtn" class="btn-reveal" style="background:var(--primary);">${icons.callPhone}<span id="revealLabel">إظهار رقم الجوال</span></button>
         <a href="https://wa.me/967${esc(listing.phone.replace(/^0+/, '').replace(/\s+/g, ''))}?text=${encodeURIComponent('السلام عليكم، أنا مهتم بإعلانك "' + listing.title + '" في صفقة')}" target="_blank" class="btn-msg" style="background:#25D366;color:#fff;border-color:#25D366;">${icons.whatsapp} تواصل عبر واتساب</a>
+        ${!owner ? (user ? `
+        <form method="post" action="/listing/${listing.id}/message" style="display:flex;gap:8px;">
+          <input type="text" name="body" placeholder="اكتب رسالة للبائع داخل صفقة..." maxlength="2000" required style="flex-grow:1;border:1px solid var(--border);border-radius:10px;padding:0 12px;height:42px;background:var(--bg);font-size:13px;">
+          <button type="submit" class="btn-outline" style="flex-shrink:0;">${icons.message} إرسال</button>
+        </form>` : `<a href="/login" class="btn-outline" style="text-align:center;">${icons.message} سجّل الدخول لمراسلة البائع</a>`) : ''}
         <div class="share-row">
           <span class="share-label">مشاركة الإعلان:</span>
           <button type="button" id="copyLinkBtn" class="share-btn" title="نسخ الرابط">${icons.link}</button>
@@ -363,7 +368,11 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
           </form>`}
         </div>
       </div>` : ''}
-      ${owner ? `<form method="post" action="/listing/${listing.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');"><button class="btn-outline" style="width:100%;color:#B23A2E;">حذف الإعلان</button></form>` : ''}
+      ${owner ? `
+      <div style="display:flex;gap:10px;">
+        <a href="/listing/${listing.id}/edit" class="btn-outline" style="flex-grow:1;text-align:center;">تعديل الإعلان</a>
+        <form method="post" action="/listing/${listing.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');" style="flex-grow:1;"><button class="btn-outline" style="width:100%;color:#B23A2E;">حذف الإعلان</button></form>
+      </div>` : ''}
     </div>
   </div>
 
@@ -494,6 +503,67 @@ function sellerPage({ user, seller, listings, ratingSummary = { count: 0, avg: n
   return page({ title: seller.name, user, body });
 }
 
+function messagesPage({ user, conversations }) {
+  const rows = conversations.length ? conversations.map((c) => `
+    <a href="/messages/${c.id}" class="ad-row" style="text-decoration:none;color:inherit;">
+      <div class="avatar" style="flex-shrink:0;">${esc((c.other_name || '؟').slice(0, 2))}</div>
+      <div class="info" style="flex-grow:1;">
+        <span style="font-weight:700;">${esc(c.other_name)}${c.unread ? ` <span style="background:#B23A2E;color:#fff;font-size:10px;padding:1px 7px;border-radius:20px;font-weight:700;">${c.unread}</span>` : ''}</span>
+        <span class="sub">${esc(c.listing_title)}${c.last_body ? ' — ' + esc(c.last_body.slice(0, 60)) : ''}</span>
+      </div>
+      <span class="views">${esc((c.last_at || '').slice(0, 16))}</span>
+    </a>`).join('') : emptyState('emptyBox', 'لا توجد محادثات بعد. راسل بائعًا من صفحة أي إعلان يعجبك.');
+
+  const body = `
+  ${header(user)}
+  <div class="zigzag" style="height:8px;"></div>
+  <div class="dash-layout container">
+    <div class="dash-side">
+      ${profileCard(user)}
+      ${dashNav('messages', user.unreadMessages)}
+    </div>
+    <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;">
+      <h1 style="margin:0;font-size:20px;font-weight:800;">الرسائل</h1>
+      <div class="my-ads">${rows}</div>
+    </div>
+  </div>
+  ${footer()}
+  `;
+  return page({ title: 'الرسائل', user, body });
+}
+
+function conversationPage({ user, convo, messages, otherName }) {
+  const bubbles = messages.map((m) => {
+    const mine = m.sender_id === user.id;
+    return `<div style="display:flex;justify-content:${mine ? 'flex-start' : 'flex-end'};">
+      <div style="max-width:70%;background:${mine ? 'var(--primary)' : 'var(--chip)'};color:${mine ? '#fff' : 'var(--text)'};padding:10px 14px;border-radius:14px;${mine ? 'border-bottom-left-radius:4px;' : 'border-bottom-right-radius:4px;'}">
+        <p style="margin:0;font-size:13.5px;white-space:pre-wrap;">${esc(m.body)}</p>
+        <span style="display:block;margin-top:4px;font-size:10.5px;opacity:0.7;">${esc((m.created_at || '').slice(0, 16))}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const body = `
+  ${header(user)}
+  <div class="breadcrumb"><a href="/messages">الرسائل</a><span>/</span><span class="current">${esc(otherName)}</span></div>
+  <div class="container" style="max-width:720px;padding-top:20px;padding-bottom:40px;display:flex;flex-direction:column;gap:16px;">
+    <div class="card" style="flex-direction:row;align-items:center;justify-content:space-between;">
+      <div>
+        <div style="font-weight:800;font-size:15px;">${esc(otherName)}</div>
+        <a href="/listing/${convo.listing_id}" style="font-size:12.5px;color:var(--text-2);">بخصوص: ${esc(convo.listing_title)}</a>
+      </div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;">${bubbles || `<p style="text-align:center;color:var(--text-2);font-size:13px;">لا توجد رسائل بعد.</p>`}</div>
+    <form method="post" action="/messages/${convo.id}" style="display:flex;gap:8px;">
+      <input type="text" name="body" placeholder="اكتب ردك..." maxlength="2000" required style="flex-grow:1;border:1px solid var(--border);border-radius:10px;padding:0 14px;height:46px;background:var(--bg);">
+      <button type="submit" class="btn-primary">إرسال</button>
+    </form>
+  </div>
+  ${footer()}
+  `;
+  return page({ title: otherName, user, body });
+}
+
 function loginPage({ user, error }) {
   const body = `
   <div class="auth-wrap">
@@ -613,19 +683,20 @@ function signupPage({ user, error, cities }) {
   return page({ title: 'حساب جديد', user, body });
 }
 
-function postAdPage({ user, categories, cities, categoryFields = {}, error }) {
-  const catOptions = categories.map((c) => `<option value="${c.id}" data-slug="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
-  const cityOptions = cities.map((c) => `<option>${esc(c)}</option>`).join('');
+function postAdPage({ user, categories, cities, categoryFields = {}, error, editing = null, images = [] }) {
+  const catOptions = categories.map((c) => `<option value="${c.id}" data-slug="${esc(c.slug)}"${editing && editing.category_id === c.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('');
+  const cityOptions = cities.map((c) => `<option${editing && editing.city === c ? ' selected' : ''}>${esc(c)}</option>`).join('');
+  const extra = editing ? (editing.extra || {}) : {};
 
   const extraBlocks = categories.map((c) => {
     const schema = categoryFields[c.slug] || [];
     if (!schema.length) return '';
     const fields = schema.map((f) => {
       if (f.type === 'select') {
-        const opts = f.options.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+        const opts = f.options.map((o) => `<option value="${esc(o)}"${extra[f.key] === o ? ' selected' : ''}>${esc(o)}</option>`).join('');
         return `<div class="field"><label>${esc(f.label)}</label><select name="f_${f.key}"><option value="">—</option>${opts}</select></div>`;
       }
-      return `<div class="field"><label>${esc(f.label)}</label><input type="${f.type === 'number' ? 'number' : 'text'}" name="f_${f.key}" placeholder="${esc(f.placeholder || '')}"></div>`;
+      return `<div class="field"><label>${esc(f.label)}</label><input type="${f.type === 'number' ? 'number' : 'text'}" name="f_${f.key}" placeholder="${esc(f.placeholder || '')}" value="${esc(extra[f.key] || '')}"></div>`;
     }).join('');
     return `<div class="extra-fields-block" data-cat-slug="${esc(c.slug)}" style="display:none;">
       <div class="divider" style="margin:4px 0 14px;"></div>
@@ -633,39 +704,49 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error }) {
       <div class="extra-grid">${fields}</div>
     </div>`;
   }).join('');
+
+  const existingImages = images.length ? `
+      <div class="field">
+        <label>الصور الحالية</label>
+        <div class="img-previews">${images.map((src) => `<div class="prev"><img src="${esc(src)}"></div>`).join('')}</div>
+        <span class="hint">أي صور جديدة تختارها أدناه تُضاف لهذه الصور ولا تحذفها.</span>
+      </div>` : '';
+
   const body = `
   ${header(user)}
   <div class="zigzag" style="height:8px;"></div>
   <div class="postad-wrap">
     <div>
-      <h1 style="margin:0 0 4px;font-size:22px;font-weight:800;">إضافة إعلان جديد</h1>
-      <p style="margin:0;font-size:13px;color:var(--text-2);">أدخل بيانات إعلانك بدقة ليصل لأكبر عدد من المهتمين</p>
+      <h1 style="margin:0 0 4px;font-size:22px;font-weight:800;">${editing ? 'تعديل الإعلان' : 'إضافة إعلان جديد'}</h1>
+      <p style="margin:0;font-size:13px;color:var(--text-2);">${editing ? 'حدّث بيانات إعلانك وحفظ التعديلات' : 'أدخل بيانات إعلانك بدقة ليصل لأكبر عدد من المهتمين'}</p>
     </div>
     ${error ? `<div class="error-box">${esc(error)}</div>` : ''}
-    <form class="card" id="postAdForm" method="post" action="/post-ad" style="gap:18px;">
+    <form class="card" id="postAdForm" method="post" action="${editing ? `/listing/${editing.id}/edit` : '/post-ad'}" style="gap:18px;">
       <div class="field">
         <label>الفئة</label>
-        <select name="category_id" id="categorySelect" required>${catOptions}</select>
+        <select name="category_id" id="categorySelect" required${editing ? ' disabled' : ''}>${catOptions}</select>
+        ${editing ? `<span class="hint">لا يمكن تغيير فئة الإعلان بعد النشر — لإعلان من فئة مختلفة أضف إعلانًا جديدًا.</span>` : ''}
       </div>
       <div class="field">
         <label>عنوان الإعلان</label>
-        <input type="text" name="title" placeholder="مثال: تويوتا كامري 2018 فل كامل" required>
+        <input type="text" name="title" placeholder="مثال: تويوتا كامري 2018 فل كامل" value="${esc(editing ? editing.title : '')}" required>
       </div>
       ${extraBlocks}
       <div class="field">
         <label>الوصف</label>
-        <textarea name="description" placeholder="اكتب وصفًا واضحًا يشمل الحالة والمواصفات..."></textarea>
+        <textarea name="description" placeholder="اكتب وصفًا واضحًا يشمل الحالة والمواصفات...">${esc(editing ? editing.description : '')}</textarea>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <div class="field"><label>السعر (ر.ي)</label><input type="text" name="price" placeholder="0"></div>
+        <div class="field"><label>السعر (ر.ي)</label><input type="text" name="price" placeholder="0" value="${esc(editing ? editing.price : '')}"></div>
         <div class="field"><label>المحافظة</label><select name="city">${cityOptions}</select></div>
       </div>
       <div class="field">
         <label>رقم التواصل</label>
-        <div class="phone-input"><span class="prefix">967+</span><input type="text" name="phone" placeholder="7XX XXX XXX" required></div>
+        <div class="phone-input"><span class="prefix">967+</span><input type="text" name="phone" placeholder="7XX XXX XXX" value="${esc(editing ? editing.phone : '')}" required></div>
       </div>
+      ${existingImages}
       <div class="field">
-        <label>صور الإعلان</label>
+        <label>${editing ? 'إضافة صور جديدة' : 'صور الإعلان'}</label>
         <div class="drop-zone" id="dropZone">
           ${icons.upload}
           <span style="font-size:13.5px;font-weight:700;">اضغط لاختيار الصور</span>
@@ -677,8 +758,8 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error }) {
       </div>
       <input type="hidden" name="images_b64" id="imagesField">
       <div style="display:flex;gap:12px;">
-        <button type="submit" class="btn-primary" style="flex-grow:1;">نشر الإعلان</button>
-        <a href="/" class="btn-outline">إلغاء</a>
+        <button type="submit" class="btn-primary" style="flex-grow:1;">${editing ? 'حفظ التعديلات' : 'نشر الإعلان'}</button>
+        <a href="${editing ? `/listing/${editing.id}` : '/'}" class="btn-outline">إلغاء</a>
       </div>
     </form>
   </div>
@@ -724,7 +805,7 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error }) {
   </script>
   ${footer()}
   `;
-  return page({ title: 'إضافة إعلان', user, body });
+  return page({ title: editing ? 'تعديل الإعلان' : 'إضافة إعلان', user, body });
 }
 
 function profileCard(user) {
@@ -736,13 +817,13 @@ function profileCard(user) {
   </div>`;
 }
 
-function dashNav(active) {
+function dashNav(active, unreadMessages = 0) {
   const item = (href, icon, label, key) =>
     `<a href="${href}"${key === active ? ' class="active"' : ''}>${icon} ${label}</a>`;
   return `
   <div class="dash-nav">
     ${item('/dashboard', icons.grid, 'إعلاناتي', 'ads')}
-    <span style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;font-size:13.5px;font-weight:600;color:var(--text-2);cursor:default;">${icons.message} الرسائل <span style="margin-right:auto;font-size:10px;background:var(--chip);color:var(--primary);padding:2px 8px;border-radius:20px;font-weight:700;">قريبًا</span></span>
+    <a href="/messages"${active === 'messages' ? ' class="active"' : ''} style="display:flex;align-items:center;gap:10px;">${icons.message} الرسائل ${unreadMessages ? `<span style="margin-right:auto;font-size:10px;background:#B23A2E;color:#fff;padding:2px 8px;border-radius:20px;font-weight:700;">${unreadMessages}</span>` : ''}</a>
     ${item('/settings', icons.settings, 'الإعدادات', 'settings')}
     <form method="post" action="/logout" style="margin:0;"><button class="danger">${icons.logout} تسجيل الخروج</button></form>
   </div>`;
@@ -983,6 +1064,7 @@ function dashboardPage({ user, listings, stats }) {
       ${l.status === 'expired' || (daysLeft(l.expires_at) !== null && daysLeft(l.expires_at) <= 5)
         ? `<form method="post" action="/listing/${l.id}/renew"><button class="btn-mini" style="background:#1A73E8;color:#fff;">تجديد الإعلان</button></form>`
         : ''}
+      <a href="/listing/${l.id}/edit" class="btn-mini" style="text-decoration:none;display:inline-flex;align-items:center;">تعديل</a>
       <form method="post" action="/listing/${l.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');">
         <button class="btn-mini danger">حذف</button>
       </form>
@@ -994,7 +1076,7 @@ function dashboardPage({ user, listings, stats }) {
   <div class="dash-layout container">
     <div class="dash-side">
       ${profileCard(user)}
-      ${dashNav('ads')}
+      ${dashNav('ads', user.unreadMessages)}
     </div>
     <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;">
       <div class="stat-grid">
@@ -1184,4 +1266,4 @@ function privacyPage({ user }) {
   });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage, sellerPage };
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage, sellerPage, messagesPage, conversationPage };
