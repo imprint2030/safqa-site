@@ -21,12 +21,30 @@ const NAV_CATEGORIES = [
   { name: 'مفقودات', slug: 'lost' },
 ];
 
+// علامة "صفقة" — نافذة قمرية صنعانية مصغّرة (زجاج ملوّن + جص أبيض + إطار بُني)
+function qamariyaMark(size = 36) {
+  const h = Math.round(size * 0.82);
+  return `
+  <svg viewBox="0 0 40 32" width="${size}" height="${h}" aria-hidden="true">
+    <rect x="2" y="20" width="36" height="10" rx="1.5" fill="#6B3527"/>
+    <path d="M2 20 L5.44 9.42 L14.44 2.88 L25.56 2.88 L34.56 9.42 L38 20 Z" fill="#FBF6EE"/>
+    <path d="M20 20 L2 20 L5.44 9.42 Z" fill="#1F8A6F"/>
+    <path d="M20 20 L5.44 9.42 L14.44 2.88 Z" fill="#D9A62B"/>
+    <path d="M20 20 L14.44 2.88 L25.56 2.88 Z" fill="#1A73E8"/>
+    <path d="M20 20 L25.56 2.88 L34.56 9.42 Z" fill="#D9A62B"/>
+    <path d="M20 20 L34.56 9.42 L38 20 Z" fill="#1F8A6F"/>
+    <circle cx="20" cy="20" r="2.3" fill="#D9381E"/>
+    <path d="M2 20 L5.44 9.42 L14.44 2.88 L25.56 2.88 L34.56 9.42 L38 20 Z" fill="none" stroke="#5A2C20" stroke-width="1.6"/>
+    <rect x="2" y="20" width="36" height="10" rx="1.5" fill="none" stroke="#5A2C20" stroke-width="1.6"/>
+  </svg>`;
+}
+
 function header(user) {
   const catLinks = NAV_CATEGORIES.map((c) => `<a href="/category/${c.slug}">${esc(c.name)}</a>`).join('');
   return `
   <header class="site-header">
     <a href="/" class="logo">
-      <div class="logo-mark"><span>ص</span></div>
+      ${qamariyaMark(38)}
       <span class="logo-text">صفقة</span>
     </a>
     <form class="search-bar" action="/category/cars" method="get">
@@ -42,16 +60,17 @@ function header(user) {
     }
   </header>
   <nav class="cat-nav">${catLinks}</nav>
-  <div class="zigzag"></div>`;
+  <div class="zigzag jewel"></div>`;
 }
 
 function footer() {
   return `
+  <div class="merlon-strip"></div>
   <footer class="site-footer">
     <div class="container footer-cols">
       <div class="footer-col" style="max-width:260px;">
         <div class="footer-brand">
-          <div class="logo-mark" style="width:28px;height:25px;border-radius:14px 14px 3px 3px;"><span style="font-size:12px;">ص</span></div>
+          ${qamariyaMark(26)}
           <span>صفقة</span>
         </div>
         <span>منصة إعلانات مبوبة يمنية لبيع وشراء كل شيء بسهولة وأمان.</span>
@@ -64,9 +83,10 @@ function footer() {
       </div>
       <div class="footer-col">
         <h5>الشركة</h5>
-        <span>من نحن</span>
-        <span>اتصل بنا</span>
-        <span>الشروط والأحكام</span>
+        <a href="/about">من نحن</a>
+        <a href="/contact">اتصل بنا</a>
+        <a href="/terms">الشروط والأحكام</a>
+        <a href="/privacy">سياسة الخصوصية</a>
       </div>
       <div class="footer-col">
         <h5>حسابي</h5>
@@ -95,4 +115,4 @@ ${body}
 </html>`;
 }
 
-module.exports = { page, header, footer, esc, icons };
+module.exports = { page, header, footer, esc, icons, qamariyaMark };
