@@ -396,7 +396,7 @@ function loginPage({ user, error }) {
         <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">تسجيل الدخول</button>
       </form>
       <div class="muted-center" style="margin-top:-6px;"><a href="/forgot-password">نسيت كلمة المرور؟</a></div>
-      <p class="muted-center" style="margin:2px 0;">تجربة سريعة: demo@safqa.ye / 777123456 — كلمة المرور demo1234</p>
+      <p class="muted-center" style="margin:2px 0;">تجربة سريعة: demo@safqa.ye / 733034675 — كلمة المرور demo1234</p>
       <div class="muted-center">ليس لديك حساب؟ <a href="/signup">إنشاء حساب جديد</a></div>
     </div>
   </div>
