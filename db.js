@@ -215,6 +215,14 @@ function parsePriceValue(priceText) {
   return Number.isFinite(n) ? n : null;
 }
 
+// ترقية: تصحيح بيانات حساب العرض التجريبي (الاسم ورقم الجوال) لقاعدة بيانات مهيّأة مسبقًا بالبيانات القديمة
+function fixDemoAccount() {
+  const demo = db.prepare('SELECT id FROM users WHERE email = ?').get('demo@safqa.ye');
+  if (!demo) return;
+  db.prepare("UPDATE users SET name = ?, phone = ? WHERE id = ?").run('نصر محمد', '733034675', demo.id);
+  db.prepare("UPDATE listings SET phone = ? WHERE user_id = ? AND phone = ?").run('733034675', demo.id, '777123456');
+}
+
 function seed() {
   const catCount = db.prepare('SELECT COUNT(*) AS c FROM categories').get().c;
   if (catCount === 0) {
@@ -234,7 +242,7 @@ function seed() {
     const insertUser = db.prepare(
       'INSERT INTO users (name, phone, email, password_hash, city) VALUES (?, ?, ?, ?, ?)'
     );
-    insertUser.run('عبدالله المخلافي', '777123456', 'demo@safqa.ye', hashPassword('demo1234'), 'صنعاء');
+    insertUser.run('نصر محمد', '733034675', 'demo@safqa.ye', hashPassword('demo1234'), 'صنعاء');
 
     const demoUserId = db.prepare('SELECT id FROM users WHERE email = ?').get('demo@safqa.ye').id;
     const catBySlug = (slug) => db.prepare('SELECT id FROM categories WHERE slug = ?').get(slug).id;
@@ -271,11 +279,12 @@ function seed() {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const s of sample) {
-      insertListing.run(demoUserId, catBySlug(s.cat), s.title, s.desc, s.price, s.city, '777123456', s.featured, Math.floor(Math.random() * 800) + 30);
+      insertListing.run(demoUserId, catBySlug(s.cat), s.title, s.desc, s.price, s.city, '733034675', s.featured, Math.floor(Math.random() * 800) + 30);
     }
   }
 
   ensureAdminAccount();
+  fixDemoAccount();
 
   // ترحيل: حساب القيمة الرقمية للسعر لأي إعلان لم تُحسب له بعد (لتفعيل فلتر السعر)
   const unparsed = db.prepare('SELECT id, price FROM listings WHERE price_value IS NULL').all();
