@@ -1,5 +1,13 @@
 const { page, header, footer, esc, icons, qamariyaMark } = require('./layout');
 
+const REPORT_REASONS_CLIENT = {
+  fraud: 'احتيال أو نصب',
+  fake: 'إعلان مزيّف أو منتهي',
+  prohibited: 'سلعة أو خدمة مخالفة للقانون',
+  duplicate: 'إعلان مكرر أو سبام',
+  other: 'سبب آخر',
+};
+
 function emptyState(iconKey, text, actionHtml) {
   return `
   <div class="empty-state">
@@ -11,6 +19,29 @@ function emptyState(iconKey, text, actionHtml) {
 
 function moneyOrText(v) {
   return esc(v);
+}
+
+function daysLeft(expiresAt) {
+  if (!expiresAt) return null;
+  const ms = new Date(expiresAt.replace(' ', 'T') + 'Z').getTime() - Date.now();
+  return Math.ceil(ms / (24 * 60 * 60 * 1000));
+}
+
+function listingStatusPill(listing) {
+  if (listing.status === 'hidden') return `<span class="status-pill" style="background:#FBE7E3;color:#B23A2E;">مخفي (بلاغات)</span>`;
+  if (listing.status === 'expired') return `<span class="status-pill" style="background:#F1E7D8;color:#8a6d1f;">منتهي</span>`;
+  const left = daysLeft(listing.expires_at);
+  if (left !== null && left <= 5) return `<span class="status-pill" style="background:#FBF0D8;color:#8a6d1f;">نشط — ينتهي بعد ${left <= 0 ? 'يوم' : left + ' يوم'}</span>`;
+  return `<span class="status-pill status-active">نشط</span>`;
+}
+
+function ratingStars(avg) {
+  const full = avg ? Math.round(avg) : 0;
+  let out = '';
+  for (let i = 1; i <= 5; i++) {
+    out += `<span style="color:${i <= full ? '#D9A62B' : '#D8CFC2'};">${icons.star}</span>`;
+  }
+  return out;
 }
 
 function listingCard(l, featured = false) {
@@ -206,7 +237,7 @@ function forgotPasswordPage({ user, submitted }) {
   return page({ title: 'نسيت كلمة المرور', user, body });
 }
 
-function listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema = [], baseUrl }) {
+function listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema = [], baseUrl, ratingSummary = { count: 0, avg: null }, ratings = [], myRating = null, canRate = false, similar = [], reportSent = null }) {
   const mainImg = images[0] ? `<img src="${esc(images[0])}" alt="" data-idx="0" class="lightbox-trigger">` : 'الصورة الرئيسية للإعلان';
   const thumbs = images.slice(1, 5).map((f, i) => `<div class="thumb-sm"><img src="${esc(f)}" alt="" data-idx="${i + 1}" class="lightbox-trigger"></div>`).join('');
 
@@ -270,14 +301,42 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
         <p class="desc-text">${esc(listing.description) || 'لا يوجد وصف إضافي لهذا الإعلان.'}</p>
       </div>
       ${specsGrid}
+      <div class="card" id="reviews">
+        <span style="font-size:15px;font-weight:800;">التقييمات (${ratingSummary.count})</span>
+        ${ratingSummary.count ? `<div style="display:flex;align-items:center;gap:8px;">${ratingStars(ratingSummary.avg)} <span style="font-weight:800;font-size:16px;">${ratingSummary.avg}</span> <span style="color:var(--text-2);font-size:12.5px;">من ${ratingSummary.count} تقييم</span></div>` : ''}
+        ${ratings.length ? `<div style="display:flex;flex-direction:column;gap:12px;margin-top:4px;">
+          ${ratings.map((r) => `
+            <div style="border-top:1px solid var(--border);padding-top:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:700;font-size:13.5px;">${esc(r.rater_name)}</span>
+                <span>${ratingStars(r.rating)}</span>
+              </div>
+              ${r.comment ? `<p style="margin:4px 0 0;font-size:13px;color:var(--text-2);">${esc(r.comment)}</p>` : ''}
+            </div>`).join('')}
+        </div>` : `<p style="font-size:13px;color:var(--text-2);margin:8px 0 0;">لا توجد تقييمات لهذا البائع بعد.</p>`}
+        ${canRate ? `
+        <form method="post" action="/listing/${listing.id}/rate" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;display:flex;flex-direction:column;gap:8px;">
+          <label style="font-size:13px;font-weight:700;">قيّم تعاملك مع هذا البائع</label>
+          <select name="rating" style="height:40px;border:1px solid var(--border);border-radius:10px;padding:0 10px;background:var(--bg);">
+            <option value="5">★★★★★ ممتاز</option>
+            <option value="4">★★★★ جيد جدًا</option>
+            <option value="3">★★★ جيد</option>
+            <option value="2">★★ مقبول</option>
+            <option value="1">★ ضعيف</option>
+          </select>
+          <textarea name="comment" rows="2" placeholder="تعليق (اختياري)" style="border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--bg);resize:vertical;"></textarea>
+          <button type="submit" class="btn-primary">إرسال التقييم</button>
+        </form>` : myRating ? `<p style="font-size:12.5px;color:var(--text-2);margin-top:8px;">لقد قيّمت هذا البائع بالفعل (${myRating.rating} نجوم) بخصوص هذا الإعلان.</p>` : !user ? `<p style="font-size:12.5px;color:var(--text-2);margin-top:8px;"><a href="/login" style="color:var(--accent);font-weight:700;">سجّل الدخول</a> لتقييم هذا البائع.</p>` : ''}
+      </div>
     </div>
     <div class="listing-sidebar">
       <div class="card">
         <div class="seller-row">
           <div class="avatar">${esc((listing.seller_name || '؟').slice(0, 2))}</div>
           <div>
-            <div class="seller-name">${esc(listing.seller_name)}</div>
+            <a href="/seller/${listing.user_id}" class="seller-name" style="text-decoration:none;">${esc(listing.seller_name)}</a>
             <div class="seller-sub">${esc(listing.seller_city || '')} · عضو منذ ${esc((listing.seller_since || '').slice(0, 4))}</div>
+            ${ratingSummary.count ? `<div class="seller-sub" style="margin-top:4px;">${ratingStars(ratingSummary.avg)} <span style="font-weight:700;">${ratingSummary.avg}</span> (${ratingSummary.count} تقييم)</div>` : `<div class="seller-sub" style="margin-top:4px;color:var(--text-2);">لا توجد تقييمات بعد</div>`}
           </div>
         </div>
         <button id="revealBtn" class="btn-reveal" style="background:var(--primary);">${icons.callPhone}<span id="revealLabel">إظهار رقم الجوال</span></button>
@@ -290,9 +349,29 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
       </div>
       ${bidSection}
       <div class="warn-box">${icons.info}<p style="margin:0;">لا تدفع أي مبلغ مقدمًا قبل معاينة السلعة، وتجنّب التحويل البنكي لأشخاص غير موثوقين. تعامل داخل موقع صفقة فقط.</p></div>
+      ${!owner ? `
+      <div class="card" style="gap:10px;">
+        <button type="button" id="reportToggleBtn" class="btn-outline" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;color:#B23A2E;border-color:#F0C9C2;">${icons.flag} بلاغ عن هذا الإعلان</button>
+        <div id="reportFormBox" style="display:none;">
+          ${reportSent ? `<div class="warn-box" style="background:#E6F1EC;border-color:#1A73E8;color:#124C8A;">${icons.info}<p style="margin:0;">تم استلام بلاغك، شكرًا لمساعدتك في الحفاظ على جودة الموقع.</p></div>` : `
+          <form method="post" action="/listing/${listing.id}/report" style="gap:10px;display:flex;flex-direction:column;">
+            <select name="reason" required style="height:40px;border:1px solid var(--border);border-radius:10px;padding:0 10px;background:var(--bg);">
+              ${Object.entries(REPORT_REASONS_CLIENT).map(([k, label]) => `<option value="${esc(k)}">${esc(label)}</option>`).join('')}
+            </select>
+            <textarea name="details" rows="2" placeholder="تفاصيل إضافية (اختياري)" style="border:1px solid var(--border);border-radius:10px;padding:8px 10px;background:var(--bg);resize:vertical;"></textarea>
+            <button type="submit" class="btn-outline" style="width:100%;color:#B23A2E;">إرسال البلاغ</button>
+          </form>`}
+        </div>
+      </div>` : ''}
       ${owner ? `<form method="post" action="/listing/${listing.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');"><button class="btn-outline" style="width:100%;color:#B23A2E;">حذف الإعلان</button></form>` : ''}
     </div>
   </div>
+
+  ${similar.length ? `
+  <div class="section container">
+    <h2>إعلانات مشابهة</h2>
+    <div class="listing-grid cols-3">${similar.map((l) => listingCard(l)).join('')}</div>
+  </div>` : ''}
 
   <div class="lightbox-overlay" id="lightboxOverlay">
     <button type="button" id="lightboxClose" class="lightbox-btn lightbox-close">${icons.close}</button>
@@ -306,6 +385,16 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
       document.getElementById('revealLabel').textContent = '${esc(listing.phone)}';
       this.style.background = 'var(--accent)';
     });
+
+    (function () {
+      var btn = document.getElementById('reportToggleBtn');
+      var box = document.getElementById('reportFormBox');
+      if (!btn || !box) return;
+      if (${reportSent ? 'true' : 'false'}) box.style.display = 'block';
+      btn.addEventListener('click', function () {
+        box.style.display = box.style.display === 'none' ? 'block' : 'none';
+      });
+    })();
 
     (function () {
       var copyBtn = document.getElementById('copyLinkBtn');
@@ -362,6 +451,49 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
   });
 }
 
+function sellerPage({ user, seller, listings, ratingSummary = { count: 0, avg: null }, ratings = [] }) {
+  const body = `
+  ${header(user)}
+  <div class="breadcrumb"><a href="/">الرئيسية</a><span>/</span><span class="current">${esc(seller.name)}</span></div>
+  <div class="container" style="padding-top:28px;padding-bottom:40px;display:flex;flex-direction:column;gap:20px;">
+    <div class="card" style="flex-direction:row;align-items:center;gap:16px;">
+      <div class="avatar" style="width:64px;height:64px;font-size:22px;flex-shrink:0;">${esc((seller.name || '؟').slice(0, 2))}</div>
+      <div>
+        <div style="font-size:18px;font-weight:800;">${esc(seller.name)}</div>
+        <div style="font-size:13px;color:var(--text-2);">${esc(seller.city || '')} · عضو منذ ${esc((seller.created_at || '').slice(0, 4))}</div>
+        <div style="margin-top:6px;">
+          ${ratingSummary.count ? `${ratingStars(ratingSummary.avg)} <span style="font-weight:800;">${ratingSummary.avg}</span> <span style="color:var(--text-2);font-size:12.5px;">(${ratingSummary.count} تقييم)</span>` : `<span style="color:var(--text-2);font-size:12.5px;">لا توجد تقييمات بعد</span>`}
+        </div>
+      </div>
+    </div>
+    <div>
+      <h2 style="margin:0 0 12px;">إعلانات ${esc(seller.name)} (${listings.length})</h2>
+      <div class="listing-grid cols-3">
+        ${listings.length ? listings.map((l) => listingCard(l)).join('') : ''}
+      </div>
+      ${listings.length ? '' : emptyState('emptyBox', 'لا توجد إعلانات نشطة لهذا البائع حاليًا.')}
+    </div>
+    ${ratings.length ? `
+    <div class="card">
+      <span style="font-size:15px;font-weight:800;">آخر التقييمات</span>
+      <div style="display:flex;flex-direction:column;gap:12px;margin-top:8px;">
+        ${ratings.map((r) => `
+          <div style="border-top:1px solid var(--border);padding-top:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span style="font-weight:700;font-size:13.5px;">${esc(r.rater_name)}</span>
+              <span>${ratingStars(r.rating)}</span>
+            </div>
+            <div style="font-size:11.5px;color:var(--text-2);">عن إعلان: ${esc(r.listing_title)}</div>
+            ${r.comment ? `<p style="margin:4px 0 0;font-size:13px;color:var(--text-2);">${esc(r.comment)}</p>` : ''}
+          </div>`).join('')}
+      </div>
+    </div>` : ''}
+  </div>
+  ${footer()}
+  `;
+  return page({ title: seller.name, user, body });
+}
+
 function loginPage({ user, error }) {
   const body = `
   <div class="auth-wrap">
@@ -396,7 +528,6 @@ function loginPage({ user, error }) {
         <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">تسجيل الدخول</button>
       </form>
       <div class="muted-center" style="margin-top:-6px;"><a href="/forgot-password">نسيت كلمة المرور؟</a></div>
-      <p class="muted-center" style="margin:2px 0;">تجربة سريعة: demo@safqa.ye / 733034675 — كلمة المرور demo1234</p>
       <div class="muted-center">ليس لديك حساب؟ <a href="/signup">إنشاء حساب جديد</a></div>
     </div>
   </div>
@@ -436,7 +567,7 @@ function signupPage({ user, error, cities }) {
       <form method="post" action="/signup">
         <div class="field">
           <label>الاسم الكامل</label>
-          <input type="text" name="name" placeholder="مثال: أحمد الحاشدي" required>
+          <input type="text" name="name" placeholder="مثال: نصر محمد" required>
         </div>
         <div class="field" data-panel="phone" style="margin-top:14px;">
           <label>رقم الجوال</label>
@@ -847,8 +978,11 @@ function dashboardPage({ user, listings, stats }) {
         <a href="/listing/${l.id}">${esc(l.title)}</a>
         <span class="sub">${moneyOrText(l.price)} · ${esc(l.city)}</span>
       </div>
-      <span class="status-pill status-active">نشط</span>
+      ${listingStatusPill(l)}
       <span class="views">${l.views} مشاهدة</span>
+      ${l.status === 'expired' || (daysLeft(l.expires_at) !== null && daysLeft(l.expires_at) <= 5)
+        ? `<form method="post" action="/listing/${l.id}/renew"><button class="btn-mini" style="background:#1A73E8;color:#fff;">تجديد الإعلان</button></form>`
+        : ''}
       <form method="post" action="/listing/${l.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');">
         <button class="btn-mini danger">حذف</button>
       </form>
@@ -867,7 +1001,7 @@ function dashboardPage({ user, listings, stats }) {
         <div class="stat-card"><span class="label">الإعلانات النشطة</span><span class="val">${stats.active}</span></div>
         <div class="stat-card"><span class="label">مجموع المشاهدات</span><span class="val">${stats.views}</span></div>
         <div class="stat-card"><span class="label">الرسائل الجديدة</span><span class="val">0</span></div>
-        <div class="stat-card"><span class="label">إعلانات منتهية</span><span class="val">0</span></div>
+        <div class="stat-card"><span class="label">إعلانات منتهية</span><span class="val">${stats.expired}</span></div>
       </div>
       <div class="my-ads">
         <div class="head"><span>إعلاناتي</span><a href="/post-ad" style="font-size:12.5px;font-weight:700;color:var(--primary);">+ إضافة إعلان جديد</a></div>
@@ -880,7 +1014,7 @@ function dashboardPage({ user, listings, stats }) {
   return page({ title: 'لوحة التحكم', user, body });
 }
 
-function adminPage({ user, stats, listings, users, resetInfo }) {
+function adminPage({ user, stats, listings, users, resetInfo, reports = [], reportReasons = {} }) {
   const listingRows = listings.length ? listings.map((l) => `
     <div class="ad-row">
       <div class="thumb">${l.thumb ? `<img src="${esc(l.thumb)}">` : ''}</div>
@@ -888,8 +1022,9 @@ function adminPage({ user, stats, listings, users, resetInfo }) {
         <a href="/listing/${l.id}">${esc(l.title)}${l.featured ? ` <span style="color:var(--price);">${icons.star}</span>` : ''}</a>
         <span class="sub">${esc(l.owner_name)} · ${esc(l.category_name)} · ${esc(l.city)}</span>
       </div>
-      <span class="status-pill status-active">${l.status === 'active' ? 'نشط' : esc(l.status)}</span>
+      ${listingStatusPill(l)}
       <span class="views">${l.views} مشاهدة</span>
+      ${l.status === 'hidden' ? `<form method="post" action="/admin/listing/${l.id}/unhide"><button class="btn-mini" style="background:#1E7A46;color:#fff;">إظهار مجددًا</button></form>` : ''}
       ${l.featured
         ? `<form method="post" action="/admin/listing/${l.id}/unfeature"><button class="btn-mini">إلغاء التثبيت</button></form>`
         : `<form method="post" action="/admin/listing/${l.id}/feature"><button class="btn-mini" style="background:#D9A62B;color:#fff;">${icons.star} تثبيت كمميز</button></form>`}
@@ -897,6 +1032,18 @@ function adminPage({ user, stats, listings, users, resetInfo }) {
         <button class="btn-mini danger">حذف</button>
       </form>
     </div>`).join('') : emptyState('emptyBox', 'لا توجد إعلانات بعد.');
+
+  const reportRows = reports.length ? reports.map((r) => `
+    <div class="ad-row">
+      <div class="info" style="flex-grow:1;">
+        <a href="/listing/${r.listing_id}">${esc(r.listing_title)}</a>
+        <span class="sub">السبب: ${esc(reportReasons[r.reason] || r.reason)}${r.details ? ' — ' + esc(r.details) : ''} · بلّغ: ${esc(r.reporter_name || 'زائر')} · ${esc((r.created_at || '').slice(0, 16))}</span>
+      </div>
+      <form method="post" action="/admin/report/${r.id}/dismiss"><button class="btn-mini">تجاهل البلاغ</button></form>
+      <form method="post" action="/admin/listing/${r.listing_id}/delete" onsubmit="return confirm('حذف هذا الإعلان نهائيًا؟');">
+        <button class="btn-mini danger">حذف الإعلان</button>
+      </form>
+    </div>`).join('') : emptyState('emptyBox', 'لا توجد بلاغات مفتوحة حاليًا.');
 
   const userRows = users.length ? users.map((u) => `
     <div class="ad-row">
@@ -943,6 +1090,10 @@ function adminPage({ user, stats, listings, users, resetInfo }) {
         <div class="stat-card"><span class="label">إجمالي الإعلانات</span><span class="val">${stats.listings}</span></div>
         <div class="stat-card"><span class="label">إعلانات نشطة</span><span class="val">${stats.activeListings}</span></div>
         <div class="stat-card"><span class="label">مجموع المشاهدات</span><span class="val">${stats.views}</span></div>
+      </div>
+      <div class="my-ads">
+        <div class="head"><span>بلاغات مفتوحة (${reports.length})${reports.length ? ` <span style="color:#B23A2E;">${icons.flag}</span>` : ''}</span></div>
+        ${reportRows}
       </div>
       <div class="my-ads">
         <div class="head"><span>كل الإعلانات (${listings.length})</span></div>
@@ -1033,4 +1184,4 @@ function privacyPage({ user }) {
   });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage };
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage, sellerPage };
