@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 
-const { db, CITIES, hashPassword, verifyPassword } = require('./db');
+const { db, CITIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue } = require('./db');
 const { createSession, destroySession, getUserFromSession, parseCookies } = require('./auth');
 const { timeAgo, parseUrlEncoded } = require('./utils');
 const pages = require('./views/pages');
@@ -87,11 +87,22 @@ function listingImages(listingId) {
   return db.prepare('SELECT file FROM listing_images WHERE listing_id = ? ORDER BY position').all(listingId).map((r) => `/public/uploads/${r.file}`);
 }
 
+function parseExtraFields(raw) {
+  if (!raw) return {};
+  try {
+    const obj = JSON.parse(raw);
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch (e) {
+    return {};
+  }
+}
+
 function decorate(listing) {
   return {
     ...listing,
     thumb: listingThumb(listing.id),
     time_ago: timeAgo(listing.created_at),
+    extra: parseExtraFields(listing.extra_fields),
   };
 }
 
@@ -131,31 +142,64 @@ function serveStatic(req, res, urlPath) {
 
 // ---------- route handlers ----------
 
-async function handleHome(req, res, user) {
+async function handleHome(req, res, user, baseUrl) {
   const categories = categoryList();
   const cityRank = user && user.prioritize_city && user.city ? `(CASE WHEN city = '${user.city.replace(/'/g, "''")}' THEN 0 ELSE 1 END), ` : '';
   const featured = db.prepare(`SELECT * FROM listings WHERE status = ? ORDER BY featured DESC, ${cityRank}created_at DESC LIMIT 8`).all('active').map(decorate);
   const recent = db.prepare(`SELECT * FROM listings WHERE status = ? ORDER BY ${cityRank}created_at DESC LIMIT 4`).all('active').map(decorate);
-  send(res, 200, pages.homePage({ user, categories, featured, recent }));
+  send(res, 200, pages.homePage({ user, categories, featured, recent, baseUrl }));
 }
 
-async function handleCategory(req, res, user, slug, query) {
+const PAGE_SIZE = 24;
+
+async function handleCategory(req, res, user, slug, query, baseUrl) {
   const category = db.prepare('SELECT * FROM categories WHERE slug = ?').get(slug);
   if (!category) { send(res, 404, 'الفئة غير موجودة'); return; }
   const city = query.get('city');
-  let rows;
-  if (city && city !== 'الكل') {
-    rows = db.prepare('SELECT * FROM listings WHERE category_id = ? AND city = ? AND status = ? ORDER BY featured DESC, created_at DESC')
-      .all(category.id, city, 'active');
-  } else {
-    rows = db.prepare('SELECT * FROM listings WHERE category_id = ? AND status = ? ORDER BY featured DESC, created_at DESC')
-      .all(category.id, 'active');
-  }
+  const priceMin = parseFloat(query.get('price_min'));
+  const priceMax = parseFloat(query.get('price_max'));
+  const page = Math.max(1, parseInt(query.get('page'), 10) || 1);
+
+  const conditions = ['category_id = ?', "status = 'active'"];
+  const params = [category.id];
+  if (city && city !== 'الكل') { conditions.push('city = ?'); params.push(city); }
+  if (Number.isFinite(priceMin)) { conditions.push('price_value >= ?'); params.push(priceMin); }
+  if (Number.isFinite(priceMax)) { conditions.push('price_value <= ?'); params.push(priceMax); }
+  const where = conditions.join(' AND ');
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM listings WHERE ${where}`).get(...params).c;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const offset = (Math.min(page, totalPages) - 1) * PAGE_SIZE;
+
+  const rows = db.prepare(`SELECT * FROM listings WHERE ${where} ORDER BY featured DESC, created_at DESC LIMIT ? OFFSET ?`)
+    .all(...params, PAGE_SIZE, offset);
+
   const listings = rows.map(decorate);
-  send(res, 200, pages.categoryPage({ user, category, listings, cities: CITIES, selectedCity: city || 'الكل' }));
+  const savedAlready = user ? !!db.prepare('SELECT id FROM saved_searches WHERE user_id = ? AND category_id = ? AND (city = ? OR (city IS NULL AND ? IS NULL))').get(user.id, category.id, city || null, city || null) : false;
+  send(res, 200, pages.categoryPage({
+    user, category, listings, cities: CITIES, selectedCity: city || 'الكل', savedAlready,
+    priceMin: query.get('price_min') || '', priceMax: query.get('price_max') || '',
+    page: Math.min(page, totalPages), totalPages, total, baseUrl,
+  }));
 }
 
-async function handleListing(req, res, user, id, bidError) {
+async function handleSearch(req, res, user, query) {
+  const q = (query.get('q') || '').trim();
+  const page = Math.max(1, parseInt(query.get('page'), 10) || 1);
+  let listings = [];
+  let total = 0;
+  const totalPages = 1;
+  if (q) {
+    const like = `%${q}%`;
+    total = db.prepare("SELECT COUNT(*) AS c FROM listings WHERE status = 'active' AND (title LIKE ? OR description LIKE ?)").get(like, like).c;
+    const rows = db.prepare("SELECT * FROM listings WHERE status = 'active' AND (title LIKE ? OR description LIKE ?) ORDER BY featured DESC, created_at DESC LIMIT ? OFFSET ?")
+      .all(like, like, PAGE_SIZE, (page - 1) * PAGE_SIZE);
+    listings = rows.map(decorate);
+  }
+  send(res, 200, pages.searchPage({ user, q, listings, total, page, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)) }));
+}
+
+async function handleListing(req, res, user, id, bidError, baseUrl) {
   const listing = db.prepare(`
     SELECT l.*, c.name AS category_name, c.slug AS category_slug,
            u.name AS seller_name, u.city AS seller_city, u.created_at AS seller_since
@@ -168,12 +212,14 @@ async function handleListing(req, res, user, id, bidError) {
   db.prepare('UPDATE listings SET views = views + 1 WHERE id = ?').run(id);
   listing.views += 1;
   listing.time_ago = timeAgo(listing.created_at);
+  listing.extra = parseExtraFields(listing.extra_fields);
   const images = listingImages(id);
   const owner = user && user.id === listing.user_id;
   const highestBid = db.prepare('SELECT MAX(amount) AS m FROM bids WHERE listing_id = ?').get(id).m;
   const myBid = user ? db.prepare('SELECT * FROM bids WHERE listing_id = ? AND buyer_id = ? ORDER BY created_at DESC LIMIT 1').get(id, user.id) : null;
   const isFavorited = user ? !!db.prepare('SELECT id FROM favorites WHERE user_id = ? AND listing_id = ?').get(user.id, id) : false;
-  send(res, 200, pages.listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError }));
+  const fieldSchema = CATEGORY_FIELDS[listing.category_slug] || [];
+  send(res, 200, pages.listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema, baseUrl }));
 }
 
 async function handleLoginGet(req, res, user, error) {
@@ -201,6 +247,16 @@ async function handleLoginPost(req, res) {
 
   const sid = createSession(row.id);
   redirect(res, '/dashboard', sessionCookie(sid));
+}
+
+async function handleForgotPasswordGet(req, res, user) {
+  if (user) { redirect(res, '/dashboard'); return; }
+  send(res, 200, pages.forgotPasswordPage({ user: null, submitted: false }));
+}
+
+async function handleForgotPasswordPost(req, res) {
+  await readBody(req); // استهلاك الجسم فقط — لا حاجة لقراءة القيم، الرسالة ثابتة لمنع استكشاف الحسابات
+  send(res, 200, pages.forgotPasswordPage({ user: null, submitted: true }));
 }
 
 async function handleSignupGet(req, res, user) {
@@ -244,7 +300,7 @@ async function handleLogoutPost(req, res) {
 
 async function handlePostAdGet(req, res, user) {
   if (!user) { redirect(res, '/login'); return; }
-  send(res, 200, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, error: null }));
+  send(res, 200, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: null }));
 }
 
 async function handlePostAdPost(req, res, user) {
@@ -258,14 +314,30 @@ async function handlePostAdPost(req, res, user) {
   const phone = (body.phone || '').trim();
 
   if (!title || !categoryId || !phone) {
-    send(res, 400, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, error: 'الرجاء تعبئة الفئة والعنوان ورقم التواصل على الأقل.' }));
+    send(res, 400, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: 'الرجاء تعبئة الفئة والعنوان ورقم التواصل على الأقل.' }));
     return;
   }
 
+  const recentCount = db.prepare("SELECT COUNT(*) AS c FROM listings WHERE user_id = ? AND created_at > datetime('now', '-1 hour')").get(user.id).c;
+  if (recentCount >= 5) {
+    send(res, 429, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: 'لقد نشرت عدة إعلانات خلال ساعة واحدة. الرجاء الانتظار قليلًا قبل نشر إعلان جديد (الحد: 5 إعلانات/ساعة) للحفاظ على جودة الموقع.' }));
+    return;
+  }
+
+  const catRow = db.prepare('SELECT slug FROM categories WHERE id = ?').get(categoryId);
+  const schema = (catRow && CATEGORY_FIELDS[catRow.slug]) || [];
+  const extra = {};
+  schema.forEach((f) => {
+    const v = (body['f_' + f.key] || '').toString().trim();
+    if (v) extra[f.key] = v;
+  });
+  const extraJson = Object.keys(extra).length ? JSON.stringify(extra) : null;
+  const priceValue = parsePriceValue(price);
+
   const info = db.prepare(`
-    INSERT INTO listings (user_id, category_id, title, description, price, city, phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(user.id, categoryId, title, description, price, city, phone);
+    INSERT INTO listings (user_id, category_id, title, description, price, city, phone, extra_fields, price_value)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(user.id, categoryId, title, description, price, city, phone, extraJson, priceValue);
 
   saveBase64Images(info.lastInsertRowid, body.images_b64);
 
@@ -300,7 +372,19 @@ function buildSettingsData(user, error, success) {
     ORDER BY b.created_at DESC
   `).all(user.id);
 
-  return { user, error, success, cities: CITIES, sellerListings, receivedBids, favorites, myBids };
+  const savedSearchRows = db.prepare(`
+    SELECT ss.*, c.slug AS category_slug FROM saved_searches ss
+    JOIN categories c ON c.id = ss.category_id
+    WHERE ss.user_id = ? ORDER BY ss.created_at DESC
+  `).all(user.id);
+  const savedSearches = savedSearchRows.map((s) => {
+    const newCount = s.city
+      ? db.prepare("SELECT COUNT(*) AS c FROM listings WHERE category_id = ? AND city = ? AND status = 'active' AND created_at > ?").get(s.category_id, s.city, s.created_at).c
+      : db.prepare("SELECT COUNT(*) AS c FROM listings WHERE category_id = ? AND status = 'active' AND created_at > ?").get(s.category_id, s.created_at).c;
+    return { ...s, newCount };
+  });
+
+  return { user, error, success, cities: CITIES, sellerListings, receivedBids, favorites, myBids, savedSearches };
 }
 
 async function handleSettingsGet(req, res, user, error, success) {
@@ -427,6 +511,36 @@ async function handleFavoriteToggle(req, res, user, listingId) {
   redirect(res, `/listing/${listingId}`);
 }
 
+async function handleSavedSearchPost(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const categoryId = parseInt(body.category_id, 10);
+  const city = (body.city || '').trim();
+  const slug = body.category_slug || '';
+  const category = db.prepare('SELECT * FROM categories WHERE id = ?').get(categoryId);
+  if (category) {
+    const existing = db.prepare('SELECT id FROM saved_searches WHERE user_id = ? AND category_id = ? AND (city = ? OR (city IS NULL AND ? = \'\'))').get(user.id, categoryId, city || null, city);
+    if (!existing) {
+      db.prepare('INSERT INTO saved_searches (user_id, category_id, category_name, city) VALUES (?, ?, ?, ?)')
+        .run(user.id, categoryId, category.name, city || null);
+    }
+  }
+  redirect(res, slug ? `/category/${slug}${city ? '?city=' + encodeURIComponent(city) : ''}` : '/');
+}
+
+async function handleSavedSearchDelete(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  db.prepare('DELETE FROM saved_searches WHERE id = ? AND user_id = ?').run(id, user.id);
+  redirect(res, '/settings');
+}
+
+async function handleAdminFeature(req, res, user, id, featured) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare('UPDATE listings SET featured = ? WHERE id = ?').run(featured ? 1 : 0, id);
+  redirect(res, '/admin');
+}
+
 async function handleDashboard(req, res, user) {
   if (!user) { redirect(res, '/login'); return; }
   const rows = db.prepare('SELECT * FROM listings WHERE user_id = ? ORDER BY created_at DESC').all(user.id).map(decorate);
@@ -451,10 +565,7 @@ async function handleDeleteListing(req, res, user, id) {
   redirect(res, '/dashboard');
 }
 
-async function handleAdminGet(req, res, user) {
-  if (!user) { redirect(res, '/login'); return; }
-  if (!user.is_admin) { send(res, 403, 'غير مصرح لك بالدخول لهذه الصفحة'); return; }
-
+function renderAdminPage(res, user, resetInfo) {
   const stats = {
     users: db.prepare('SELECT COUNT(*) AS c FROM users').get().c,
     listings: db.prepare('SELECT COUNT(*) AS c FROM listings').get().c,
@@ -472,7 +583,23 @@ async function handleAdminGet(req, res, user) {
 
   const users = db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY created_at DESC`).all();
 
-  send(res, 200, pages.adminPage({ user, stats, listings, users }));
+  send(res, 200, pages.adminPage({ user, stats, listings, users, resetInfo }));
+}
+
+async function handleAdminGet(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح لك بالدخول لهذه الصفحة'); return; }
+  renderAdminPage(res, user);
+}
+
+async function handleAdminResetPassword(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!target) { send(res, 404, 'المستخدم غير موجود'); return; }
+  const tempPassword = crypto.randomBytes(4).toString('hex');
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(tempPassword), id);
+  renderAdminPage(res, user, { name: target.name, password: tempPassword });
 }
 
 async function handleAdminVerifyUser(req, res, user, id, verified) {
@@ -529,10 +656,18 @@ const server = http.createServer(async (req, res) => {
 
     const user = getCurrentUser(req);
     const m = req.method;
+    const baseUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host;
 
-    if (pathname === '/' && m === 'GET') return handleHome(req, res, user);
-    if (pathname.startsWith('/category/') && m === 'GET') return handleCategory(req, res, user, pathname.split('/')[2], fullUrl.searchParams);
-    if (pathname.match(/^\/listing\/\d+$/) && m === 'GET') return handleListing(req, res, user, pathname.split('/')[2]);
+    if (pathname === '/' && m === 'GET') return handleHome(req, res, user, baseUrl);
+    if (pathname === '/about' && m === 'GET') return send(res, 200, pages.aboutPage({ user }));
+    if (pathname === '/contact' && m === 'GET') return send(res, 200, pages.contactPage({ user }));
+    if (pathname === '/terms' && m === 'GET') return send(res, 200, pages.termsPage({ user }));
+    if (pathname === '/privacy' && m === 'GET') return send(res, 200, pages.privacyPage({ user }));
+    if (pathname === '/search' && m === 'GET') return handleSearch(req, res, user, fullUrl.searchParams);
+    if (pathname === '/forgot-password' && m === 'GET') return handleForgotPasswordGet(req, res, user);
+    if (pathname === '/forgot-password' && m === 'POST') return handleForgotPasswordPost(req, res);
+    if (pathname.startsWith('/category/') && m === 'GET') return handleCategory(req, res, user, pathname.split('/')[2], fullUrl.searchParams, baseUrl);
+    if (pathname.match(/^\/listing\/\d+$/) && m === 'GET') return handleListing(req, res, user, pathname.split('/')[2], null, baseUrl);
     if (pathname.match(/^\/listing\/\d+\/delete$/) && m === 'POST') return handleDeleteListing(req, res, user, pathname.split('/')[2]);
     if (pathname === '/login' && m === 'GET') return handleLoginGet(req, res, user, null);
     if (pathname === '/login' && m === 'POST') return handleLoginPost(req, res);
@@ -550,11 +685,16 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/bid\/\d+\/accept$/) && m === 'POST') return handleBidAccept(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/bid\/\d+\/reject$/) && m === 'POST') return handleBidReject(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/favorites\/\d+\/toggle$/) && m === 'POST') return handleFavoriteToggle(req, res, user, pathname.split('/')[2]);
+    if (pathname === '/saved-searches' && m === 'POST') return handleSavedSearchPost(req, res, user);
+    if (pathname.match(/^\/saved-searches\/\d+\/delete$/) && m === 'POST') return handleSavedSearchDelete(req, res, user, pathname.split('/')[2]);
     if (pathname === '/admin' && m === 'GET') return handleAdminGet(req, res, user);
+    if (pathname.match(/^\/admin\/listing\/\d+\/feature$/) && m === 'POST') return handleAdminFeature(req, res, user, pathname.split('/')[3], true);
+    if (pathname.match(/^\/admin\/listing\/\d+\/unfeature$/) && m === 'POST') return handleAdminFeature(req, res, user, pathname.split('/')[3], false);
     if (pathname.match(/^\/admin\/listing\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteListing(req, res, user, pathname.split('/')[3]);
     if (pathname.match(/^\/admin\/user\/\d+\/delete$/) && m === 'POST') return handleAdminDeleteUser(req, res, user, pathname.split('/')[3]);
     if (pathname.match(/^\/admin\/user\/\d+\/verify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], true);
     if (pathname.match(/^\/admin\/user\/\d+\/unverify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], false);
+    if (pathname.match(/^\/admin\/user\/\d+\/reset-password$/) && m === 'POST') return handleAdminResetPassword(req, res, user, pathname.split('/')[3]);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
   } catch (err) {
