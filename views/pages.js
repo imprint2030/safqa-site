@@ -1,4 +1,13 @@
-const { page, header, footer, esc, icons } = require('./layout');
+const { page, header, footer, esc, icons, qamariyaMark } = require('./layout');
+
+function emptyState(iconKey, text, actionHtml) {
+  return `
+  <div class="empty-state">
+    <div class="empty-ico">${icons[iconKey] || icons.emptyBox}</div>
+    <p>${text}</p>
+    ${actionHtml || ''}
+  </div>`;
+}
 
 function moneyOrText(v) {
   return esc(v);
@@ -28,7 +37,7 @@ function categoryCard(c) {
   </a>`;
 }
 
-function homePage({ user, categories, featured, recent }) {
+function homePage({ user, categories, featured, recent, baseUrl }) {
   const body = `
   ${header(user)}
   <div class="hero">
@@ -60,15 +69,51 @@ function homePage({ user, categories, featured, recent }) {
 
   ${footer()}
   `;
-  return page({ title: 'الرئيسية', user, body });
+  return page({ title: 'الرئيسية', user, body, og: { url: baseUrl } });
 }
 
-function categoryPage({ user, category, listings, cities, selectedCity, q }) {
+function categoryPage({ user, category, listings, cities, selectedCity, savedAlready, priceMin = '', priceMax = '', page: pageNum = 1, totalPages = 1, total = 0, baseUrl }) {
   const cityRows = ['الكل', ...cities].map((c) => {
     const active = c === (selectedCity || 'الكل');
     const href = c === 'الكل' ? `/category/${category.slug}` : `/category/${category.slug}?city=${encodeURIComponent(c)}`;
     return `<a href="${href}" class="city-row${active ? ' active' : ''}"><span class="dot" style="background:${active ? 'var(--primary)' : 'transparent'}"></span><span>${esc(c)}</span></a>`;
   }).join('');
+
+  const priceForm = `
+      <form method="get" action="/category/${category.slug}" style="display:flex;gap:8px;">
+        ${selectedCity && selectedCity !== 'الكل' ? `<input type="hidden" name="city" value="${esc(selectedCity)}">` : ''}
+        <input type="text" inputmode="numeric" name="price_min" value="${esc(priceMin)}" placeholder="من">
+        <input type="text" inputmode="numeric" name="price_max" value="${esc(priceMax)}" placeholder="إلى">
+        <button type="submit" class="btn-mini" style="flex-shrink:0;">تطبيق</button>
+      </form>`;
+
+  function pageHref(p) {
+    const params = new URLSearchParams();
+    if (selectedCity && selectedCity !== 'الكل') params.set('city', selectedCity);
+    if (priceMin) params.set('price_min', priceMin);
+    if (priceMax) params.set('price_max', priceMax);
+    if (p > 1) params.set('page', p);
+    const qs = params.toString();
+    return `/category/${category.slug}${qs ? '?' + qs : ''}`;
+  }
+
+  const pagination = totalPages > 1 ? `
+    <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:8px;">
+      ${pageNum > 1 ? `<a href="${pageHref(pageNum - 1)}" class="btn-mini">${icons.chevRight} السابق</a>` : ''}
+      <span style="font-size:12.5px;color:var(--text-2);">صفحة ${pageNum} من ${totalPages}</span>
+      ${pageNum < totalPages ? `<a href="${pageHref(pageNum + 1)}" class="btn-mini">التالي ${icons.chevLeft}</a>` : ''}
+    </div>` : '';
+
+  const saveSearchBox = user ? `
+      <div class="divider"></div>
+      <form method="post" action="/saved-searches">
+        <input type="hidden" name="category_id" value="${category.id}">
+        <input type="hidden" name="category_slug" value="${esc(category.slug)}">
+        <input type="hidden" name="city" value="${selectedCity && selectedCity !== 'الكل' ? esc(selectedCity) : ''}">
+        <button type="submit" class="btn-outline" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;font-size:12.5px;height:40px;" ${savedAlready ? 'disabled' : ''}>
+          ${icons.bookmark} ${savedAlready ? 'تم حفظ هذا البحث' : 'حفظ هذا البحث وتنبيهي بالجديد'}
+        </button>
+      </form>` : '';
 
   const body = `
   ${header(user)}
@@ -82,29 +127,99 @@ function categoryPage({ user, category, listings, cities, selectedCity, q }) {
       <div class="divider"></div>
       <div>
         <h4 style="margin-bottom:10px;">السعر (ر.ي)</h4>
-        <div style="display:flex;gap:8px;">
-          <input type="text" placeholder="من">
-          <input type="text" placeholder="إلى">
-        </div>
+        ${priceForm}
       </div>
+      ${saveSearchBox}
     </div>
     <div class="results">
       <div class="results-head">
-        <span>عرض ${listings.length} إعلان في «${esc(category.name)}${selectedCity && selectedCity !== 'الكل' ? ' - ' + esc(selectedCity) : ''}»</span>
+        <span>عرض ${listings.length} من ${total} إعلان في «${esc(category.name)}${selectedCity && selectedCity !== 'الكل' ? ' - ' + esc(selectedCity) : ''}»</span>
       </div>
       <div class="listing-grid cols-3">
-        ${listings.length ? listings.map((l) => listingCard(l)).join('') : '<p style="color:var(--text-2);font-size:14px;">لا توجد إعلانات مطابقة حاليًا.</p>'}
+        ${listings.length ? listings.map((l) => listingCard(l)).join('') : ''}
       </div>
+      ${listings.length ? '' : emptyState('emptyBox', 'لا توجد إعلانات مطابقة حاليًا في هذه الفئة/المدينة.', user ? '' : `<a href="/post-ad" class="btn-primary" style="margin-top:4px;">كن أول من ينشر إعلانًا هنا</a>`)}
+      ${pagination}
     </div>
   </div>
   ${footer()}
   `;
-  return page({ title: category.name, user, body });
+  return page({ title: category.name, user, body, og: { title: `${category.name} — صفقة`, url: baseUrl ? baseUrl + '/category/' + category.slug : undefined } });
 }
 
-function listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError }) {
-  const mainImg = images[0] ? `<img src="${esc(images[0])}" alt="">` : 'الصورة الرئيسية للإعلان';
-  const thumbs = images.slice(1, 5).map((f) => `<div class="thumb-sm"><img src="${esc(f)}" alt=""></div>`).join('');
+function searchPage({ user, q, listings, total, page: pageNum = 1, totalPages = 1 }) {
+  function pageHref(p) {
+    const params = new URLSearchParams({ q });
+    if (p > 1) params.set('page', p);
+    return `/search?${params.toString()}`;
+  }
+  const pagination = totalPages > 1 ? `
+    <div style="display:flex;justify-content:center;align-items:center;gap:10px;margin-top:8px;">
+      ${pageNum > 1 ? `<a href="${pageHref(pageNum - 1)}" class="btn-mini">${icons.chevRight} السابق</a>` : ''}
+      <span style="font-size:12.5px;color:var(--text-2);">صفحة ${pageNum} من ${totalPages}</span>
+      ${pageNum < totalPages ? `<a href="${pageHref(pageNum + 1)}" class="btn-mini">التالي ${icons.chevLeft}</a>` : ''}
+    </div>` : '';
+
+  const body = `
+  ${header(user)}
+  <div class="breadcrumb"><a href="/">الرئيسية</a><span>/</span><span class="current">نتائج البحث</span></div>
+  <div class="section container">
+    ${q ? `<h2 style="margin:0;">نتائج البحث عن «${esc(q)}» (${total})</h2>` : `<h2 style="margin:0;">ابحث في صفقة</h2>`}
+    <div class="listing-grid cols-3">
+      ${listings.length ? listings.map((l) => listingCard(l)).join('') : ''}
+    </div>
+    ${listings.length ? '' : emptyState('emptyBox', q ? `لا توجد نتائج مطابقة لـ «${esc(q)}».` : 'اكتب كلمة في مربع البحث أعلاه للبدء.')}
+    ${pagination}
+  </div>
+  ${footer()}
+  `;
+  return page({ title: q ? `بحث: ${q}` : 'بحث', user, body });
+}
+
+function forgotPasswordPage({ user, submitted }) {
+  const body = `
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <a href="/" class="auth-logo">
+        ${qamariyaMark(46)}
+        <span class="logo-text" style="font-size:22px;">صفقة</span>
+      </a>
+      <div class="auth-title"><h1>نسيت كلمة المرور</h1><p>أدخل رقم جوالك أو بريدك الإلكتروني المسجّل</p></div>
+      ${submitted ? `
+      <div class="warn-box" style="background:#E6F1EC;border-color:#1A73E8;color:#124C8A;">
+        ${icons.info}
+        <p style="margin:0;">إذا كان هذا الحساب مسجّلاً لدينا، فريق الدعم سيتواصل معك قريبًا لإعادة تعيين كلمة المرور. تواصل معنا الآن مباشرة عبر <a href="/contact" style="color:var(--accent);font-weight:700;">صفحة اتصل بنا</a> لتسريع الأمر.</p>
+      </div>
+      <div class="muted-center"><a href="/login">العودة لتسجيل الدخول</a></div>` : `
+      <form method="post" action="/forgot-password">
+        <div class="field">
+          <label>رقم الجوال أو البريد الإلكتروني</label>
+          <input type="text" name="identifier" placeholder="7XXXXXXXX أو example@email.com" required>
+        </div>
+        <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">إرسال طلب الاستعادة</button>
+      </form>
+      <p class="muted-center" style="margin:2px 0;">ملاحظة: الموقع لا يرسل رسائل تلقائية حاليًا؛ سيتم التواصل معك يدويًا من إدارة الموقع للتحقق من هويتك وإعادة تعيين كلمة المرور.</p>
+      <div class="muted-center"><a href="/login">العودة لتسجيل الدخول</a></div>`}
+    </div>
+  </div>
+  `;
+  return page({ title: 'نسيت كلمة المرور', user, body });
+}
+
+function listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema = [], baseUrl }) {
+  const mainImg = images[0] ? `<img src="${esc(images[0])}" alt="" data-idx="0" class="lightbox-trigger">` : 'الصورة الرئيسية للإعلان';
+  const thumbs = images.slice(1, 5).map((f, i) => `<div class="thumb-sm"><img src="${esc(f)}" alt="" data-idx="${i + 1}" class="lightbox-trigger"></div>`).join('');
+
+  const specEntries = fieldSchema
+    .map((f) => ({ label: f.label, value: listing.extra && listing.extra[f.key] }))
+    .filter((e) => e.value);
+  const specsGrid = specEntries.length ? `
+      <div class="card">
+        <span style="font-size:15px;font-weight:800;">المواصفات</span>
+        <div class="specs-grid">
+          ${specEntries.map((e) => `<div><div class="k">${esc(e.label)}</div><div class="v">${esc(e.value)}</div></div>`).join('')}
+        </div>
+      </div>` : '';
   const canBid = user && !owner && (user.role === 'buyer' || user.role === 'both' || !user.role);
   const bidSection = user
     ? (owner
@@ -154,6 +269,7 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
         <span style="font-size:15px;font-weight:800;">الوصف</span>
         <p class="desc-text">${esc(listing.description) || 'لا يوجد وصف إضافي لهذا الإعلان.'}</p>
       </div>
+      ${specsGrid}
     </div>
     <div class="listing-sidebar">
       <div class="card">
@@ -166,21 +282,84 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
         </div>
         <button id="revealBtn" class="btn-reveal" style="background:var(--primary);">${icons.callPhone}<span id="revealLabel">إظهار رقم الجوال</span></button>
         <a href="https://wa.me/967${esc(listing.phone.replace(/^0+/, '').replace(/\s+/g, ''))}?text=${encodeURIComponent('السلام عليكم، أنا مهتم بإعلانك "' + listing.title + '" في صفقة')}" target="_blank" class="btn-msg" style="background:#25D366;color:#fff;border-color:#25D366;">${icons.whatsapp} تواصل عبر واتساب</a>
+        <div class="share-row">
+          <span class="share-label">مشاركة الإعلان:</span>
+          <button type="button" id="copyLinkBtn" class="share-btn" title="نسخ الرابط">${icons.link}</button>
+          <a class="share-btn" target="_blank" title="مشاركة عبر X" href="https://twitter.com/intent/tweet?text=${encodeURIComponent(listing.title)}&url=__PAGE_URL__">${icons.shareIco}</a>
+        </div>
       </div>
       ${bidSection}
       <div class="warn-box">${icons.info}<p style="margin:0;">لا تدفع أي مبلغ مقدمًا قبل معاينة السلعة، وتجنّب التحويل البنكي لأشخاص غير موثوقين. تعامل داخل موقع صفقة فقط.</p></div>
       ${owner ? `<form method="post" action="/listing/${listing.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');"><button class="btn-outline" style="width:100%;color:#B23A2E;">حذف الإعلان</button></form>` : ''}
     </div>
   </div>
+
+  <div class="lightbox-overlay" id="lightboxOverlay">
+    <button type="button" id="lightboxClose" class="lightbox-btn lightbox-close">${icons.close}</button>
+    <button type="button" id="lightboxPrev" class="lightbox-btn lightbox-prev">${icons.chevRight}</button>
+    <img id="lightboxImg" src="" alt="">
+    <button type="button" id="lightboxNext" class="lightbox-btn lightbox-next">${icons.chevLeft}</button>
+  </div>
+
   <script>
     document.getElementById('revealBtn').addEventListener('click', function () {
       document.getElementById('revealLabel').textContent = '${esc(listing.phone)}';
       this.style.background = 'var(--accent)';
     });
+
+    (function () {
+      var copyBtn = document.getElementById('copyLinkBtn');
+      var twitterLink = document.querySelector('.share-row a.share-btn');
+      var pageUrl = window.location.href;
+      if (twitterLink) twitterLink.href = twitterLink.href.replace('__PAGE_URL__', encodeURIComponent(pageUrl));
+      if (copyBtn) {
+        copyBtn.addEventListener('click', function () {
+          navigator.clipboard.writeText(pageUrl).then(function () {
+            var original = copyBtn.innerHTML;
+            copyBtn.innerHTML = '✓';
+            setTimeout(function () { copyBtn.innerHTML = original; }, 1500);
+          }).catch(function () {});
+        });
+      }
+    })();
+
+    (function () {
+      var images = ${JSON.stringify(images)};
+      if (!images.length) return;
+      var overlay = document.getElementById('lightboxOverlay');
+      var imgEl = document.getElementById('lightboxImg');
+      var idx = 0;
+      function show(i) {
+        idx = (i + images.length) % images.length;
+        imgEl.src = images[idx];
+      }
+      document.querySelectorAll('.lightbox-trigger').forEach(function (el) {
+        el.style.cursor = 'zoom-in';
+        el.addEventListener('click', function () {
+          show(parseInt(el.getAttribute('data-idx'), 10) || 0);
+          overlay.classList.add('open');
+        });
+      });
+      document.getElementById('lightboxClose').addEventListener('click', function () { overlay.classList.remove('open'); });
+      document.getElementById('lightboxPrev').addEventListener('click', function () { show(idx - 1); });
+      document.getElementById('lightboxNext').addEventListener('click', function () { show(idx + 1); });
+      overlay.addEventListener('click', function (e) { if (e.target === overlay) overlay.classList.remove('open'); });
+      document.addEventListener('keydown', function (e) {
+        if (!overlay.classList.contains('open')) return;
+        if (e.key === 'Escape') overlay.classList.remove('open');
+        if (e.key === 'ArrowLeft') show(idx + 1);
+        if (e.key === 'ArrowRight') show(idx - 1);
+      });
+    })();
   </script>
   ${footer()}
   `;
-  return page({ title: listing.title, user, body });
+  const ogImage = baseUrl && images[0] ? baseUrl + images[0] : undefined;
+  const ogDescription = (listing.description || '').slice(0, 150) || `${listing.price} · ${listing.city} — على صفقة`;
+  return page({
+    title: listing.title, user, body,
+    og: { title: `${listing.title} — ${listing.price}`, description: ogDescription, image: ogImage, url: baseUrl ? baseUrl + '/listing/' + listing.id : undefined, type: 'product' },
+  });
 }
 
 function loginPage({ user, error }) {
@@ -188,7 +367,7 @@ function loginPage({ user, error }) {
   <div class="auth-wrap">
     <div class="auth-card">
       <a href="/" class="auth-logo">
-        <div class="logo-mark" style="width:44px;height:40px;border-radius:22px 22px 4px 4px;"><span style="font-size:19px;">ص</span></div>
+        ${qamariyaMark(46)}
         <span class="logo-text" style="font-size:22px;">صفقة</span>
       </a>
       <div class="auth-title"><h1>تسجيل الدخول</h1><p>سجّل دخولك للمتابعة إلى حسابك في صفقة</p></div>
@@ -216,6 +395,7 @@ function loginPage({ user, error }) {
         <input type="hidden" name="method" id="methodField" value="phone">
         <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">تسجيل الدخول</button>
       </form>
+      <div class="muted-center" style="margin-top:-6px;"><a href="/forgot-password">نسيت كلمة المرور؟</a></div>
       <p class="muted-center" style="margin:2px 0;">تجربة سريعة: demo@safqa.ye / 777123456 — كلمة المرور demo1234</p>
       <div class="muted-center">ليس لديك حساب؟ <a href="/signup">إنشاء حساب جديد</a></div>
     </div>
@@ -244,7 +424,7 @@ function signupPage({ user, error, cities }) {
   <div class="auth-wrap">
     <div class="auth-card">
       <a href="/" class="auth-logo">
-        <div class="logo-mark" style="width:40px;height:36px;border-radius:20px 20px 4px 4px;"><span style="font-size:17px;">ص</span></div>
+        ${qamariyaMark(40)}
         <span class="logo-text" style="font-size:20px;">صفقة</span>
       </a>
       <div class="auth-title"><h1>إنشاء حساب جديد</h1><p>انضم إلى صفقة وابدأ البيع والشراء في دقائق</p></div>
@@ -277,7 +457,7 @@ function signupPage({ user, error, cities }) {
         <input type="hidden" name="method" id="methodField" value="phone">
         <label style="display:flex;align-items:flex-start;gap:8px;font-size:11.5px;color:var(--text-2);line-height:1.6;margin-top:14px;">
           <input type="checkbox" required style="margin-top:2px;">
-          <span>أوافق على <span style="color:var(--accent);font-weight:700;">شروط الاستخدام</span> و<span style="color:var(--accent);font-weight:700;">سياسة الخصوصية</span> الخاصة بصفقة</span>
+          <span>أوافق على <a href="/terms" target="_blank" style="color:var(--accent);font-weight:700;">شروط الاستخدام</a> و<a href="/privacy" target="_blank" style="color:var(--accent);font-weight:700;">سياسة الخصوصية</a> الخاصة بصفقة</span>
         </label>
         <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">إنشاء الحساب</button>
       </form>
@@ -302,9 +482,26 @@ function signupPage({ user, error, cities }) {
   return page({ title: 'حساب جديد', user, body });
 }
 
-function postAdPage({ user, categories, cities, error }) {
-  const catOptions = categories.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+function postAdPage({ user, categories, cities, categoryFields = {}, error }) {
+  const catOptions = categories.map((c) => `<option value="${c.id}" data-slug="${esc(c.slug)}">${esc(c.name)}</option>`).join('');
   const cityOptions = cities.map((c) => `<option>${esc(c)}</option>`).join('');
+
+  const extraBlocks = categories.map((c) => {
+    const schema = categoryFields[c.slug] || [];
+    if (!schema.length) return '';
+    const fields = schema.map((f) => {
+      if (f.type === 'select') {
+        const opts = f.options.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join('');
+        return `<div class="field"><label>${esc(f.label)}</label><select name="f_${f.key}"><option value="">—</option>${opts}</select></div>`;
+      }
+      return `<div class="field"><label>${esc(f.label)}</label><input type="${f.type === 'number' ? 'number' : 'text'}" name="f_${f.key}" placeholder="${esc(f.placeholder || '')}"></div>`;
+    }).join('');
+    return `<div class="extra-fields-block" data-cat-slug="${esc(c.slug)}" style="display:none;">
+      <div class="divider" style="margin:4px 0 14px;"></div>
+      <span style="font-size:13px;font-weight:800;display:block;margin-bottom:4px;">تفاصيل إضافية خاصة بـ ${esc(c.name)}</span>
+      <div class="extra-grid">${fields}</div>
+    </div>`;
+  }).join('');
   const body = `
   ${header(user)}
   <div class="zigzag" style="height:8px;"></div>
@@ -317,12 +514,13 @@ function postAdPage({ user, categories, cities, error }) {
     <form class="card" id="postAdForm" method="post" action="/post-ad" style="gap:18px;">
       <div class="field">
         <label>الفئة</label>
-        <select name="category_id" required>${catOptions}</select>
+        <select name="category_id" id="categorySelect" required>${catOptions}</select>
       </div>
       <div class="field">
         <label>عنوان الإعلان</label>
         <input type="text" name="title" placeholder="مثال: تويوتا كامري 2018 فل كامل" required>
       </div>
+      ${extraBlocks}
       <div class="field">
         <label>الوصف</label>
         <textarea name="description" placeholder="اكتب وصفًا واضحًا يشمل الحالة والمواصفات..."></textarea>
@@ -354,6 +552,16 @@ function postAdPage({ user, categories, cities, error }) {
     </form>
   </div>
   <script>
+    (function () {
+      var select = document.getElementById('categorySelect');
+      var blocks = document.querySelectorAll('.extra-fields-block');
+      function sync() {
+        var slug = select.options[select.selectedIndex].getAttribute('data-slug');
+        blocks.forEach(function (b) { b.style.display = b.getAttribute('data-cat-slug') === slug ? 'block' : 'none'; });
+      }
+      select.addEventListener('change', sync);
+      sync();
+    })();
     var dropZone = document.getElementById('dropZone');
     var input = document.getElementById('imgInput');
     var previews = document.getElementById('previews');
@@ -403,7 +611,7 @@ function dashNav(active) {
   return `
   <div class="dash-nav">
     ${item('/dashboard', icons.grid, 'إعلاناتي', 'ads')}
-    ${item('#', icons.message, 'الرسائل', 'messages')}
+    <span style="display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:10px;font-size:13.5px;font-weight:600;color:var(--text-2);cursor:default;">${icons.message} الرسائل <span style="margin-right:auto;font-size:10px;background:var(--chip);color:var(--primary);padding:2px 8px;border-radius:20px;font-weight:700;">قريبًا</span></span>
     ${item('/settings', icons.settings, 'الإعدادات', 'settings')}
     <form method="post" action="/logout" style="margin:0;"><button class="danger">${icons.logout} تسجيل الخروج</button></form>
   </div>`;
@@ -419,7 +627,7 @@ function bidStatusPill(status) {
   return `<span class="status-pill ${s.cls}" style="${s.style}">${s.label}</span>`;
 }
 
-function settingsPage({ user, error, success, cities, sellerListings = [], receivedBids = [], favorites = [], myBids = [] }) {
+function settingsPage({ user, error, success, cities, sellerListings = [], receivedBids = [], favorites = [], myBids = [], savedSearches = [] }) {
   const cityOptions = cities.map((c) => `<option${c === user.city ? ' selected' : ''}>${esc(c)}</option>`).join('');
   const role = user.role || 'both';
   const showSeller = role === 'seller' || role === 'both';
@@ -515,7 +723,7 @@ function settingsPage({ user, error, success, cities, sellerListings = [], recei
       <form method="post" action="/listing/${l.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');">
         <button class="btn-mini danger">حذف</button>
       </form>
-    </div>`).join('') : `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">لا توجد إعلانات بعد. <a href="/post-ad" style="color:var(--accent);font-weight:700;">أضف إعلانك الأول</a></div>`;
+    </div>`).join('') : emptyState('emptyBox', 'لا توجد إعلانات بعد.', `<a href="/post-ad" class="btn-primary">أضف إعلانك الأول</a>`);
 
   const bidRows = receivedBids.length ? receivedBids.map((b) => `
     <div class="ad-row">
@@ -527,7 +735,7 @@ function settingsPage({ user, error, success, cities, sellerListings = [], recei
       ${b.status === 'pending' ? `
       <form method="post" action="/bid/${b.id}/accept"><button class="btn-mini" style="background:#1E7A46;color:#fff;">قبول</button></form>
       <form method="post" action="/bid/${b.id}/reject"><button class="btn-mini danger">رفض</button></form>` : ''}
-    </div>`).join('') : `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">لا توجد سومات مستلمة بعد.</div>`;
+    </div>`).join('') : emptyState('star', 'لا توجد سومات مستلمة بعد.');
 
   const sellerPanel = `
   <div data-panel="seller" style="display:none;flex-direction:column;gap:20px;">
@@ -549,7 +757,7 @@ function settingsPage({ user, error, success, cities, sellerListings = [], recei
         <span class="sub">${esc(l.price)} · ${esc(l.city)}</span>
       </div>
       <form method="post" action="/favorites/${l.id}/toggle"><button class="btn-mini danger">إزالة</button></form>
-    </div>`).join('') : `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">لا توجد سلع محفوظة في المفضلة بعد.</div>`;
+    </div>`).join('') : emptyState('heart', 'لا توجد سلع محفوظة في المفضلة بعد.', `<a href="/" class="btn-outline">تصفح الإعلانات</a>`);
 
   const myBidRows = myBids.length ? myBids.map((b) => {
     const outbid = b.status === 'pending' && Number(b.max_amount) > Number(b.amount);
@@ -561,7 +769,17 @@ function settingsPage({ user, error, success, cities, sellerListings = [], recei
       </div>
       ${bidStatusPill(b.status)}
     </div>`;
-  }).join('') : `<div style="padding:24px;text-align:center;color:var(--text-2);font-size:13px;">لم تقدّم أي سومة بعد.</div>`;
+  }).join('') : emptyState('star', 'لم تقدّم أي سومة بعد.');
+
+  const savedSearchRows = (savedSearches && savedSearches.length) ? savedSearches.map((s) => `
+    <div class="ad-row">
+      <div class="info">
+        <span class="t">${esc(s.category_name)}${s.city ? ' · ' + esc(s.city) : ' · جميع المحافظات'}</span>
+        <span class="sub">${s.newCount > 0 ? `<span style="color:var(--price);font-weight:700;">${s.newCount} إعلان جديد منذ الحفظ</span>` : 'لا جديد منذ الحفظ'}</span>
+      </div>
+      <a href="/category/${esc(s.category_slug)}${s.city ? '?city=' + encodeURIComponent(s.city) : ''}" class="btn-mini">عرض</a>
+      <form method="post" action="/saved-searches/${s.id}/delete"><button class="btn-mini danger">حذف</button></form>
+    </div>`).join('') : emptyState('bookmark', 'لا توجد عمليات بحث محفوظة. احفظ بحثًا من أي صفحة فئة لتصلك إشارة عند وجود إعلانات جديدة.');
 
   const buyerPanel = `
   <div data-panel="buyer" style="display:none;flex-direction:column;gap:20px;">
@@ -572,6 +790,10 @@ function settingsPage({ user, error, success, cities, sellerListings = [], recei
     <div class="my-ads">
       <div class="head"><span>سوماتي النشطة (${myBids.length})</span></div>
       ${myBidRows}
+    </div>
+    <div class="my-ads">
+      <div class="head"><span>عمليات البحث المحفوظة (${(savedSearches || []).length})</span></div>
+      ${savedSearchRows}
     </div>
   </div>`;
 
@@ -630,7 +852,7 @@ function dashboardPage({ user, listings, stats }) {
       <form method="post" action="/listing/${l.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');">
         <button class="btn-mini danger">حذف</button>
       </form>
-    </div>`).join('') : `<div style="padding:30px;text-align:center;color:var(--text-2);font-size:13.5px;">لا توجد إعلانات بعد. <a href="/post-ad" style="color:var(--accent);font-weight:700;">أضف إعلانك الأول</a></div>`;
+    </div>`).join('') : emptyState('emptyBox', 'لا توجد إعلانات بعد.', `<a href="/post-ad" class="btn-primary">أضف إعلانك الأول</a>`);
 
   const body = `
   ${header(user)}
@@ -658,20 +880,23 @@ function dashboardPage({ user, listings, stats }) {
   return page({ title: 'لوحة التحكم', user, body });
 }
 
-function adminPage({ user, stats, listings, users }) {
+function adminPage({ user, stats, listings, users, resetInfo }) {
   const listingRows = listings.length ? listings.map((l) => `
     <div class="ad-row">
       <div class="thumb">${l.thumb ? `<img src="${esc(l.thumb)}">` : ''}</div>
       <div class="info">
-        <a href="/listing/${l.id}">${esc(l.title)}</a>
+        <a href="/listing/${l.id}">${esc(l.title)}${l.featured ? ` <span style="color:var(--price);">${icons.star}</span>` : ''}</a>
         <span class="sub">${esc(l.owner_name)} · ${esc(l.category_name)} · ${esc(l.city)}</span>
       </div>
       <span class="status-pill status-active">${l.status === 'active' ? 'نشط' : esc(l.status)}</span>
       <span class="views">${l.views} مشاهدة</span>
+      ${l.featured
+        ? `<form method="post" action="/admin/listing/${l.id}/unfeature"><button class="btn-mini">إلغاء التثبيت</button></form>`
+        : `<form method="post" action="/admin/listing/${l.id}/feature"><button class="btn-mini" style="background:#D9A62B;color:#fff;">${icons.star} تثبيت كمميز</button></form>`}
       <form method="post" action="/admin/listing/${l.id}/delete" onsubmit="return confirm('حذف هذا الإعلان نهائيًا؟');">
         <button class="btn-mini danger">حذف</button>
       </form>
-    </div>`).join('') : `<div style="padding:30px;text-align:center;color:var(--text-2);font-size:13.5px;">لا توجد إعلانات بعد.</div>`;
+    </div>`).join('') : emptyState('emptyBox', 'لا توجد إعلانات بعد.');
 
   const userRows = users.length ? users.map((u) => `
     <div class="ad-row">
@@ -684,11 +909,20 @@ function adminPage({ user, stats, listings, users }) {
       ${u.id_document ? `<a href="/public/uploads/${esc(u.id_document)}" target="_blank" class="btn-mini" style="text-decoration:none;">عرض الهوية</a>` : ''}
       ${u.id_document && !u.id_verified ? `<form method="post" action="/admin/user/${u.id}/verify"><button class="btn-mini" style="background:#1E7A46;color:#fff;">توثيق</button></form>` : ''}
       ${u.id_verified ? `<form method="post" action="/admin/user/${u.id}/unverify"><button class="btn-mini">إلغاء التوثيق</button></form>` : ''}
+      <form method="post" action="/admin/user/${u.id}/reset-password" onsubmit="return confirm('سيتم إنشاء كلمة مرور مؤقتة جديدة لهذا المستخدم. متابعة؟');">
+        <button class="btn-mini">إعادة تعيين كلمة المرور</button>
+      </form>
       ${u.is_admin ? '' : `
       <form method="post" action="/admin/user/${u.id}/delete" onsubmit="return confirm('حذف هذا المستخدم وكل إعلاناته نهائيًا؟');">
         <button class="btn-mini danger">حذف</button>
       </form>`}
     </div>`).join('') : '';
+
+  const resetBanner = resetInfo ? `
+  <div class="warn-box" style="background:#E6F1EC;border-color:#1A73E8;color:#124C8A;">
+    ${icons.info}
+    <p style="margin:0;">تم إنشاء كلمة مرور مؤقتة لـ <strong>${esc(resetInfo.name)}</strong>: <code style="background:#fff;padding:2px 8px;border-radius:6px;font-weight:800;">${esc(resetInfo.password)}</code> — انسخها وأرسلها للمستخدم مباشرة (واتساب/اتصال)، ويُفضّل أن يغيّرها من الإعدادات بعد الدخول. هذه الرسالة تظهر مرة واحدة فقط ولن تُحفظ.</p>
+  </div>` : '';
 
   const body = `
   ${header(user)}
@@ -703,6 +937,7 @@ function adminPage({ user, stats, listings, users }) {
     </div>
     <div style="flex-grow:1;display:flex;flex-direction:column;gap:20px;">
       <h1 style="margin:0;font-size:20px;font-weight:800;">لوحة الإدارة</h1>
+      ${resetBanner}
       <div class="stat-grid">
         <div class="stat-card"><span class="label">إجمالي المستخدمين</span><span class="val">${stats.users}</span></div>
         <div class="stat-card"><span class="label">إجمالي الإعلانات</span><span class="val">${stats.listings}</span></div>
@@ -724,4 +959,78 @@ function adminPage({ user, stats, listings, users }) {
   return page({ title: 'لوحة الإدارة', user, body });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage };
+function staticPage({ user, title, bodyHtml }) {
+  const body = `
+  ${header(user)}
+  <div class="zigzag" style="height:8px;"></div>
+  <div class="container" style="max-width:820px;padding-top:36px;padding-bottom:56px;">
+    <div class="card" style="gap:18px;line-height:2;font-size:14px;color:var(--text);">
+      <h1 style="margin:0;font-size:24px;font-weight:800;">${esc(title)}</h1>
+      ${bodyHtml}
+    </div>
+  </div>
+  ${footer()}
+  `;
+  return page({ title, user, body });
+}
+
+function aboutPage({ user }) {
+  return staticPage({
+    user,
+    title: 'من نحن',
+    bodyHtml: `
+      <p>صفقة منصة يمنية للإعلانات المبوبة، تهدف لتسهيل عملية البيع والشراء بين الناس في جميع المحافظات اليمنية — سيارات، عقارات، إلكترونيات، وظائف، وغيرها — بطريقة آمنة وبسيطة.</p>
+      <p>نحن سوق مفتوح يربط البائع بالمشتري مباشرة؛ صفقة لا تبيع ولا تشتري ولا تضمن أي سلعة أو خدمة معروضة، والمسؤولية عن دقة الإعلان والتعامل تقع على طرفي الصفقة.</p>
+      <p>هدفنا بناء مجتمع تسوّق موثوق لليمنيين، ونعمل باستمرار على تطوير المنصة وإضافة ميزات جديدة بناءً على احتياجات المستخدمين.</p>
+    `,
+  });
+}
+
+function contactPage({ user }) {
+  return staticPage({
+    user,
+    title: 'اتصل بنا',
+    bodyHtml: `
+      <p>يسعدنا تواصلك معنا لأي استفسار، اقتراح، أو بلاغ عن مشكلة في الموقع.</p>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <span style="font-weight:700;">البريد الإلكتروني للدعم</span>
+        <a href="mailto:nassrataa4@gmail.com" style="color:var(--accent);font-weight:700;">nassrataa4@gmail.com</a>
+      </div>
+      <p style="color:var(--text-2);font-size:13px;">نحاول الرد خلال أقرب وقت ممكن. لبلاغ عن إعلان مخالف، يرجى ذكر رقم الإعلان الظاهر في صفحة التفاصيل.</p>
+    `,
+  });
+}
+
+function termsPage({ user }) {
+  return staticPage({
+    user,
+    title: 'الشروط والأحكام',
+    bodyHtml: `
+      <p>باستخدامك موقع صفقة فإنك توافق على الشروط التالية:</p>
+      <p><strong>1. طبيعة الخدمة</strong> — صفقة منصة وسيطة تتيح للمستخدمين نشر وتصفح إعلانات بيع وشراء. المنصة ليست طرفًا في أي عملية بيع أو شراء تتم بين المستخدمين، ولا تتحمل مسؤولية جودة السلعة أو صحة بياناتها أو إتمام عملية الدفع.</p>
+      <p><strong>2. مسؤولية المستخدم</strong> — أنت مسؤول عن دقة المعلومات التي تنشرها، وعن التأكد من هوية الطرف الآخر قبل إتمام أي تعامل مالي. يُمنع نشر إعلانات لسلع أو خدمات مخالفة للقانون.</p>
+      <p><strong>3. الحسابات</strong> — يجب تقديم بيانات صحيحة عند التسجيل. أنت مسؤول عن الحفاظ على سرية كلمة المرور الخاصة بك وعن أي نشاط يتم من خلال حسابك.</p>
+      <p><strong>4. إزالة المحتوى</strong> — تحتفظ إدارة صفقة بالحق في حذف أي إعلان أو حساب يخالف هذه الشروط أو يُشتبه بأنه احتيالي، دون إشعار مسبق.</p>
+      <p><strong>5. التواصل والدفع</strong> — ننصح دائمًا بمعاينة السلعة قبل الدفع، وعدم تحويل أي مبلغ مقدمًا لأشخاص غير موثوقين.</p>
+      <p><strong>6. التعديلات</strong> — قد تُحدّث هذه الشروط من وقت لآخر، ويُعتبر استمرارك باستخدام الموقع موافقة على أي تحديث.</p>
+      <p style="color:var(--text-2);font-size:13px;">آخر تحديث: ${new Date().toISOString().slice(0, 10)}</p>
+    `,
+  });
+}
+
+function privacyPage({ user }) {
+  return staticPage({
+    user,
+    title: 'سياسة الخصوصية',
+    bodyHtml: `
+      <p><strong>البيانات التي نجمعها</strong> — الاسم، رقم الجوال و/أو البريد الإلكتروني، المحافظة، وبيانات أي إعلان تنشره (العنوان، الوصف، السعر، الصور، رقم التواصل).</p>
+      <p><strong>كيف نستخدم بياناتك</strong> — لإنشاء حسابك وتشغيله، عرض إعلاناتك للمستخدمين الآخرين، وتمكين التواصل بين البائع والمشتري. لا نبيع بياناتك لأي طرف ثالث.</p>
+      <p><strong>ظهور رقم جوالك</strong> — رقم جوالك يظهر لأي زائر يضغط "إظهار رقم الجوال" في صفحة إعلانك، وهذا مقصود لتسهيل التواصل المباشر؛ لا تنشر إعلانًا برقم لا ترغب بظهوره للعامة.</p>
+      <p><strong>كلمة المرور</strong> — تُحفظ مشفّرة في قاعدة البيانات ولا يطّلع عليها أي شخص، بما في ذلك فريق صفقة.</p>
+      <p><strong>حذف بياناتك</strong> — يمكنك تعديل بياناتك في أي وقت من "الإعدادات"، أو التواصل معنا عبر صفحة "اتصل بنا" لطلب حذف حسابك بالكامل.</p>
+      <p style="color:var(--text-2);font-size:13px;">آخر تحديث: ${new Date().toISOString().slice(0, 10)}</p>
+    `,
+  });
+}
+
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage };

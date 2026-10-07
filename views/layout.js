@@ -19,17 +19,36 @@ const NAV_CATEGORIES = [
   { name: 'وظائف', slug: 'jobs' },
   { name: 'مشاريع واستثمارات', slug: 'investments' },
   { name: 'مفقودات', slug: 'lost' },
+  { name: 'تجارة حيوانات', slug: 'livestock' },
 ];
+
+// علامة "صفقة" — نافذة قمرية صنعانية مصغّرة (زجاج ملوّن + جص أبيض + إطار بُني)
+function qamariyaMark(size = 36) {
+  const h = Math.round(size * 0.82);
+  return `
+  <svg viewBox="0 0 40 32" width="${size}" height="${h}" aria-hidden="true">
+    <rect x="2" y="20" width="36" height="10" rx="1.5" fill="#6B3527"/>
+    <path d="M2 20 L5.44 9.42 L14.44 2.88 L25.56 2.88 L34.56 9.42 L38 20 Z" fill="#FBF6EE"/>
+    <path d="M20 20 L2 20 L5.44 9.42 Z" fill="#1F8A6F"/>
+    <path d="M20 20 L5.44 9.42 L14.44 2.88 Z" fill="#D9A62B"/>
+    <path d="M20 20 L14.44 2.88 L25.56 2.88 Z" fill="#1A73E8"/>
+    <path d="M20 20 L25.56 2.88 L34.56 9.42 Z" fill="#D9A62B"/>
+    <path d="M20 20 L34.56 9.42 L38 20 Z" fill="#1F8A6F"/>
+    <circle cx="20" cy="20" r="2.3" fill="#D9381E"/>
+    <path d="M2 20 L5.44 9.42 L14.44 2.88 L25.56 2.88 L34.56 9.42 L38 20 Z" fill="none" stroke="#5A2C20" stroke-width="1.6"/>
+    <rect x="2" y="20" width="36" height="10" rx="1.5" fill="none" stroke="#5A2C20" stroke-width="1.6"/>
+  </svg>`;
+}
 
 function header(user) {
   const catLinks = NAV_CATEGORIES.map((c) => `<a href="/category/${c.slug}">${esc(c.name)}</a>`).join('');
   return `
   <header class="site-header">
     <a href="/" class="logo">
-      <div class="logo-mark"><span>ص</span></div>
+      ${qamariyaMark(38)}
       <span class="logo-text">صفقة</span>
     </a>
-    <form class="search-bar" action="/category/cars" method="get">
+    <form class="search-bar" action="/search" method="get">
       ${icons.search}
       <input type="text" name="q" placeholder="ابحث عن سيارات، عقارات، جوالات...">
       <button type="submit">بحث</button>
@@ -42,16 +61,17 @@ function header(user) {
     }
   </header>
   <nav class="cat-nav">${catLinks}</nav>
-  <div class="zigzag"></div>`;
+  <div class="zigzag jewel"></div>`;
 }
 
 function footer() {
   return `
+  <div class="merlon-strip"></div>
   <footer class="site-footer">
     <div class="container footer-cols">
       <div class="footer-col" style="max-width:260px;">
         <div class="footer-brand">
-          <div class="logo-mark" style="width:28px;height:25px;border-radius:14px 14px 3px 3px;"><span style="font-size:12px;">ص</span></div>
+          ${qamariyaMark(26)}
           <span>صفقة</span>
         </div>
         <span>منصة إعلانات مبوبة يمنية لبيع وشراء كل شيء بسهولة وأمان.</span>
@@ -64,9 +84,10 @@ function footer() {
       </div>
       <div class="footer-col">
         <h5>الشركة</h5>
-        <span>من نحن</span>
-        <span>اتصل بنا</span>
-        <span>الشروط والأحكام</span>
+        <a href="/about">من نحن</a>
+        <a href="/contact">اتصل بنا</a>
+        <a href="/terms">الشروط والأحكام</a>
+        <a href="/privacy">سياسة الخصوصية</a>
       </div>
       <div class="footer-col">
         <h5>حسابي</h5>
@@ -79,14 +100,27 @@ function footer() {
   </footer>`;
 }
 
-function page({ title, user, body, bodyClass = '', extraHead = '' }) {
+function page({ title, user, body, bodyClass = '', extraHead = '', og = {} }) {
+  const ogTitle = og.title || `${title} — صفقة`;
+  const ogDesc = og.description || 'سوق اليمن الأول للإعلانات المبوبة — بيع واشترِ كل شيء بسهولة وأمان في جميع المحافظات اليمنية.';
+  const ogTags = `
+<meta property="og:title" content="${esc(ogTitle)}">
+<meta property="og:description" content="${esc(ogDesc)}">
+<meta property="og:type" content="${esc(og.type || 'website')}">
+${og.url ? `<meta property="og:url" content="${esc(og.url)}">` : ''}
+${og.image ? `<meta property="og:image" content="${esc(og.image)}">` : ''}
+<meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}">
+<meta name="twitter:title" content="${esc(ogTitle)}">
+<meta name="twitter:description" content="${esc(ogDesc)}">`;
   return `<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${esc(title)} — صفقة</title>
+<link rel="icon" type="image/svg+xml" href="/public/favicon.svg">
 <link rel="stylesheet" href="/public/css/style.css">
+${ogTags}
 ${extraHead}
 </head>
 <body class="${bodyClass}" style="display:flex;flex-direction:column;min-height:100vh;">
@@ -95,4 +129,4 @@ ${body}
 </html>`;
 }
 
-module.exports = { page, header, footer, esc, icons };
+module.exports = { page, header, footer, esc, icons, qamariyaMark };
