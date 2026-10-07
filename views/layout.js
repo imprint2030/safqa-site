@@ -103,15 +103,23 @@ function footer() {
 function page({ title, user, body, bodyClass = '', extraHead = '', og = {} }) {
   const ogTitle = og.title || `${title} — صفقة`;
   const ogDesc = og.description || 'سوق اليمن الأول للإعلانات المبوبة — بيع واشترِ كل شيء بسهولة وأمان في جميع المحافظات اليمنية.';
+  let ogImage = og.image;
+  if (!ogImage) {
+    const origin = og.url ? og.url.replace(/^(https?:\/\/[^/]+).*$/, '$1') : '';
+    ogImage = `${origin}/public/og-image.png`;
+  }
   const ogTags = `
 <meta property="og:title" content="${esc(ogTitle)}">
 <meta property="og:description" content="${esc(ogDesc)}">
 <meta property="og:type" content="${esc(og.type || 'website')}">
 ${og.url ? `<meta property="og:url" content="${esc(og.url)}">` : ''}
-${og.image ? `<meta property="og:image" content="${esc(og.image)}">` : ''}
-<meta name="twitter:card" content="${og.image ? 'summary_large_image' : 'summary'}">
+<meta property="og:image" content="${esc(ogImage)}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="${esc(ogTitle)}">
-<meta name="twitter:description" content="${esc(ogDesc)}">`;
+<meta name="twitter:description" content="${esc(ogDesc)}">
+<meta name="twitter:image" content="${esc(ogImage)}">`;
   return `<!doctype html>
 <html lang="ar" dir="rtl">
 <head>
