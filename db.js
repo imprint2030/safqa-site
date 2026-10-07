@@ -87,6 +87,27 @@ db.exec(`
     city TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS ratings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES listings(id),
+    seller_id INTEGER NOT NULL REFERENCES users(id),
+    rater_id INTEGER NOT NULL REFERENCES users(id),
+    rating INTEGER NOT NULL,
+    comment TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(listing_id, rater_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    listing_id INTEGER NOT NULL REFERENCES listings(id),
+    reporter_id INTEGER REFERENCES users(id),
+    reason TEXT NOT NULL,
+    details TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
 
 // ترقية آمنة لقواعد بيانات قديمة كانت موجودة قبل إضافة الأعمدة/الجداول الجديدة
@@ -110,8 +131,21 @@ try {
   const lnames = lcols.map((c) => c.name);
   if (!lnames.includes('extra_fields')) db.exec("ALTER TABLE listings ADD COLUMN extra_fields TEXT");
   if (!lnames.includes('price_value')) db.exec("ALTER TABLE listings ADD COLUMN price_value REAL");
+  if (!lnames.includes('expires_at')) db.exec("ALTER TABLE listings ADD COLUMN expires_at TEXT");
 } catch (e) {
   // تجاهل
+}
+
+const LISTING_LIFETIME_DAYS = 30;
+
+// يحذّر الإعلانات المنتهية ويعيد حساب تاريخ الانتهاء لأي إعلان قديم لا يملك تاريخًا بعد
+function expireOldListings() {
+  try {
+    db.exec(`UPDATE listings SET expires_at = datetime(created_at, '+${LISTING_LIFETIME_DAYS} days') WHERE expires_at IS NULL`);
+    db.exec(`UPDATE listings SET status = 'expired' WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at < datetime('now')`);
+  } catch (e) {
+    // تجاهل
+  }
 }
 
 const CITIES = ['صنعاء', 'عدن', 'تعز', 'الحديدة', 'إب', 'مأرب', 'حضرموت', 'ذمار'];
@@ -215,6 +249,22 @@ function parsePriceValue(priceText) {
   return Number.isFinite(n) ? n : null;
 }
 
+// حسابات تجربة جاهزة يقدر مالك الموقع يعطيها لأي شخص يريد تجربة الموقع فقط (ليست معروضة للعامة)
+const TEST_ACCOUNTS = [
+  { name: 'مستخدم تجربة 1', phone: '700000001', email: 'test1@safqa.ye', password: 'Test@1234' },
+  { name: 'مستخدم تجربة 2', phone: '700000002', email: 'test2@safqa.ye', password: 'Test@1234' },
+];
+
+function ensureTestAccounts() {
+  for (const t of TEST_ACCOUNTS) {
+    const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(t.email);
+    if (!exists) {
+      db.prepare('INSERT INTO users (name, phone, email, password_hash, city) VALUES (?, ?, ?, ?, ?)')
+        .run(t.name, t.phone, t.email, hashPassword(t.password), 'صنعاء');
+    }
+  }
+}
+
 // ترقية: تصحيح بيانات حساب العرض التجريبي (الاسم ورقم الجوال) لقاعدة بيانات مهيّأة مسبقًا بالبيانات القديمة
 function fixDemoAccount() {
   const demo = db.prepare('SELECT id FROM users WHERE email = ?').get('demo@safqa.ye');
@@ -285,6 +335,7 @@ function seed() {
 
   ensureAdminAccount();
   fixDemoAccount();
+  ensureTestAccounts();
 
   // ترحيل: حساب القيمة الرقمية للسعر لأي إعلان لم تُحسب له بعد (لتفعيل فلتر السعر)
   const unparsed = db.prepare('SELECT id, price FROM listings WHERE price_value IS NULL').all();
@@ -292,8 +343,10 @@ function seed() {
     const updatePrice = db.prepare('UPDATE listings SET price_value = ? WHERE id = ?');
     for (const row of unparsed) updatePrice.run(parsePriceValue(row.price), row.id);
   }
+
+  expireOldListings();
 }
 
 seed();
 
-module.exports = { db, CITIES, CATEGORIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue };
+module.exports = { db, CITIES, CATEGORIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS };

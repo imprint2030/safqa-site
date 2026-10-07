@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 
-const { db, CITIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue } = require('./db');
+const { db, CITIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS } = require('./db');
 const { createSession, destroySession, getUserFromSession, parseCookies } = require('./auth');
 const { timeAgo, parseUrlEncoded } = require('./utils');
 const pages = require('./views/pages');
@@ -106,6 +106,35 @@ function decorate(listing) {
   };
 }
 
+function sellerRatingSummary(sellerId) {
+  const row = db.prepare('SELECT COUNT(*) AS c, AVG(rating) AS avg FROM ratings WHERE seller_id = ?').get(sellerId);
+  return { count: row.c || 0, avg: row.avg ? Math.round(row.avg * 10) / 10 : null };
+}
+
+function listingRatings(sellerId, limit = 10) {
+  return db.prepare(`
+    SELECT r.*, u.name AS rater_name, l.title AS listing_title
+    FROM ratings r
+    JOIN users u ON u.id = r.rater_id
+    JOIN listings l ON l.id = r.listing_id
+    WHERE r.seller_id = ?
+    ORDER BY r.created_at DESC LIMIT ?
+  `).all(sellerId, limit);
+}
+
+function similarListings(listing, limit = 6) {
+  return db.prepare(`
+    SELECT * FROM listings WHERE category_id = ? AND id != ? AND status = 'active'
+    ORDER BY featured DESC, created_at DESC LIMIT ?
+  `).all(listing.category_id, listing.id, limit).map(decorate);
+}
+
+const REPORT_HIDE_THRESHOLD = 3;
+
+function openReportCount(listingId) {
+  return db.prepare("SELECT COUNT(*) AS c FROM reports WHERE listing_id = ? AND status = 'open'").get(listingId).c;
+}
+
 function saveBase64Images(listingId, imagesB64) {
   if (!imagesB64) return;
   let arr;
@@ -199,7 +228,7 @@ async function handleSearch(req, res, user, query) {
   send(res, 200, pages.searchPage({ user, q, listings, total, page, totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)) }));
 }
 
-async function handleListing(req, res, user, id, bidError, baseUrl) {
+async function handleListing(req, res, user, id, bidError, baseUrl, reportSent) {
   const listing = db.prepare(`
     SELECT l.*, c.name AS category_name, c.slug AS category_slug,
            u.name AS seller_name, u.city AS seller_city, u.created_at AS seller_since
@@ -219,7 +248,15 @@ async function handleListing(req, res, user, id, bidError, baseUrl) {
   const myBid = user ? db.prepare('SELECT * FROM bids WHERE listing_id = ? AND buyer_id = ? ORDER BY created_at DESC LIMIT 1').get(id, user.id) : null;
   const isFavorited = user ? !!db.prepare('SELECT id FROM favorites WHERE user_id = ? AND listing_id = ?').get(user.id, id) : false;
   const fieldSchema = CATEGORY_FIELDS[listing.category_slug] || [];
-  send(res, 200, pages.listingPage({ user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema, baseUrl }));
+  const ratingSummary = sellerRatingSummary(listing.user_id);
+  const ratings = listingRatings(listing.user_id, 6);
+  const myRating = user ? db.prepare('SELECT * FROM ratings WHERE listing_id = ? AND rater_id = ?').get(id, user.id) : null;
+  const canRate = !!(user && !owner && !myRating);
+  const similar = similarListings(listing, 6);
+  send(res, 200, pages.listingPage({
+    user, listing, images, owner, highestBid, myBid, isFavorited, bidError, fieldSchema, baseUrl,
+    ratingSummary, ratings, myRating, canRate, similar, reportSent,
+  }));
 }
 
 async function handleLoginGet(req, res, user, error) {
@@ -335,8 +372,8 @@ async function handlePostAdPost(req, res, user) {
   const priceValue = parsePriceValue(price);
 
   const info = db.prepare(`
-    INSERT INTO listings (user_id, category_id, title, description, price, city, phone, extra_fields, price_value)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO listings (user_id, category_id, title, description, price, city, phone, extra_fields, price_value, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+${LISTING_LIFETIME_DAYS} days'))
   `).run(user.id, categoryId, title, description, price, city, phone, extraJson, priceValue);
 
   saveBase64Images(info.lastInsertRowid, body.images_b64);
@@ -534,6 +571,64 @@ async function handleSavedSearchDelete(req, res, user, id) {
   redirect(res, '/settings');
 }
 
+async function handleRatingPost(req, res, user, listingId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId);
+  if (!listing) { send(res, 404, 'الإعلان غير موجود'); return; }
+  if (listing.user_id === user.id) { redirect(res, `/listing/${listingId}`); return; }
+  const existing = db.prepare('SELECT id FROM ratings WHERE listing_id = ? AND rater_id = ?').get(listingId, user.id);
+  if (existing) { redirect(res, `/listing/${listingId}`); return; }
+
+  const body = parseUrlEncoded(await readBody(req));
+  const rating = Math.min(5, Math.max(1, parseInt(body.rating, 10) || 5));
+  const comment = (body.comment || '').trim().slice(0, 500);
+
+  db.prepare('INSERT INTO ratings (listing_id, seller_id, rater_id, rating, comment) VALUES (?, ?, ?, ?, ?)')
+    .run(listingId, listing.user_id, user.id, rating, comment || null);
+  redirect(res, `/listing/${listingId}#reviews`);
+}
+
+const REPORT_REASONS = {
+  fraud: 'احتيال أو نصب',
+  fake: 'إعلان مزيّف أو منتهي',
+  prohibited: 'سلعة أو خدمة مخالفة للقانون',
+  duplicate: 'إعلان مكرر أو سبام',
+  other: 'سبب آخر',
+};
+
+async function handleReportPost(req, res, user, listingId) {
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId);
+  if (!listing) { send(res, 404, 'الإعلان غير موجود'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const reason = REPORT_REASONS[body.reason] ? body.reason : 'other';
+  const details = (body.details || '').trim().slice(0, 500);
+
+  db.prepare('INSERT INTO reports (listing_id, reporter_id, reason, details) VALUES (?, ?, ?, ?)')
+    .run(listingId, user ? user.id : null, reason, details || null);
+
+  if (openReportCount(listingId) >= REPORT_HIDE_THRESHOLD && listing.status === 'active') {
+    db.prepare("UPDATE listings SET status = 'hidden' WHERE id = ?").run(listingId);
+  }
+  redirect(res, `/listing/${listingId}?reported=1`);
+}
+
+async function handleRenewListing(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(id);
+  if (!listing || listing.user_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare(`UPDATE listings SET expires_at = datetime('now', '+${LISTING_LIFETIME_DAYS} days'), status = 'active' WHERE id = ?`).run(id);
+  redirect(res, '/dashboard');
+}
+
+async function handleSellerPage(req, res, viewer, sellerId) {
+  const seller = db.prepare(`SELECT id, name, city, created_at FROM users WHERE id = ?`).get(sellerId);
+  if (!seller) { send(res, 404, 'هذا البائع غير موجود'); return; }
+  const listings = db.prepare("SELECT * FROM listings WHERE user_id = ? AND status = 'active' ORDER BY featured DESC, created_at DESC").all(sellerId).map(decorate);
+  const ratingSummary = sellerRatingSummary(sellerId);
+  const ratings = listingRatings(sellerId, 10);
+  send(res, 200, pages.sellerPage({ user: viewer, seller, listings, ratingSummary, ratings }));
+}
+
 async function handleAdminFeature(req, res, user, id, featured) {
   if (!user) { redirect(res, '/login'); return; }
   if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
@@ -547,6 +642,7 @@ async function handleDashboard(req, res, user) {
   const stats = {
     active: rows.filter((r) => r.status === 'active').length,
     views: rows.reduce((sum, r) => sum + r.views, 0),
+    expired: rows.filter((r) => r.status === 'expired').length,
   };
   send(res, 200, pages.dashboardPage({ user, listings: rows, stats }));
 }
@@ -583,7 +679,16 @@ function renderAdminPage(res, user, resetInfo) {
 
   const users = db.prepare(`SELECT ${USER_FIELDS} FROM users ORDER BY created_at DESC`).all();
 
-  send(res, 200, pages.adminPage({ user, stats, listings, users, resetInfo }));
+  const reports = db.prepare(`
+    SELECT r.*, l.title AS listing_title, l.status AS listing_status, u.name AS reporter_name
+    FROM reports r
+    JOIN listings l ON l.id = r.listing_id
+    LEFT JOIN users u ON u.id = r.reporter_id
+    WHERE r.status = 'open'
+    ORDER BY r.created_at DESC
+  `).all();
+
+  send(res, 200, pages.adminPage({ user, stats, listings, users, resetInfo, reports, reportReasons: REPORT_REASONS }));
 }
 
 async function handleAdminGet(req, res, user) {
@@ -641,10 +746,35 @@ async function handleAdminDeleteUser(req, res, user, id) {
   redirect(res, '/admin');
 }
 
+async function handleAdminReportDismiss(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare("UPDATE reports SET status = 'dismissed' WHERE id = ?").run(id);
+  redirect(res, '/admin');
+}
+
+async function handleAdminUnhideListing(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare("UPDATE listings SET status = 'active' WHERE id = ?").run(id);
+  db.prepare("UPDATE reports SET status = 'dismissed' WHERE listing_id = ? AND status = 'open'").run(id);
+  redirect(res, '/admin');
+}
+
 // ---------- router ----------
+
+let lastExpiryCheck = 0;
+function maybeExpireListings() {
+  const now = Date.now();
+  if (now - lastExpiryCheck > 5 * 60 * 1000) { // كل 5 دقائق كحد أقصى لتفادي استعلام على كل طلب
+    expireOldListings();
+    lastExpiryCheck = now;
+  }
+}
 
 const server = http.createServer(async (req, res) => {
   try {
+    maybeExpireListings();
     const fullUrl = new URL(req.url, `http://localhost:${PORT}`);
     const pathname = decodeURIComponent(fullUrl.pathname);
 
@@ -667,8 +797,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname === '/forgot-password' && m === 'GET') return handleForgotPasswordGet(req, res, user);
     if (pathname === '/forgot-password' && m === 'POST') return handleForgotPasswordPost(req, res);
     if (pathname.startsWith('/category/') && m === 'GET') return handleCategory(req, res, user, pathname.split('/')[2], fullUrl.searchParams, baseUrl);
-    if (pathname.match(/^\/listing\/\d+$/) && m === 'GET') return handleListing(req, res, user, pathname.split('/')[2], null, baseUrl);
+    if (pathname.match(/^\/listing\/\d+$/) && m === 'GET') return handleListing(req, res, user, pathname.split('/')[2], null, baseUrl, fullUrl.searchParams.get('reported'));
     if (pathname.match(/^\/listing\/\d+\/delete$/) && m === 'POST') return handleDeleteListing(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/rate$/) && m === 'POST') return handleRatingPost(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/report$/) && m === 'POST') return handleReportPost(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/renew$/) && m === 'POST') return handleRenewListing(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/seller\/\d+$/) && m === 'GET') return handleSellerPage(req, res, user, pathname.split('/')[2]);
     if (pathname === '/login' && m === 'GET') return handleLoginGet(req, res, user, null);
     if (pathname === '/login' && m === 'POST') return handleLoginPost(req, res);
     if (pathname === '/signup' && m === 'GET') return handleSignupGet(req, res, user);
@@ -695,6 +829,8 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/admin\/user\/\d+\/verify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], true);
     if (pathname.match(/^\/admin\/user\/\d+\/unverify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], false);
     if (pathname.match(/^\/admin\/user\/\d+\/reset-password$/) && m === 'POST') return handleAdminResetPassword(req, res, user, pathname.split('/')[3]);
+    if (pathname.match(/^\/admin\/report\/\d+\/dismiss$/) && m === 'POST') return handleAdminReportDismiss(req, res, user, pathname.split('/')[3]);
+    if (pathname.match(/^\/admin\/listing\/\d+\/unhide$/) && m === 'POST') return handleAdminUnhideListing(req, res, user, pathname.split('/')[3]);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
   } catch (err) {
