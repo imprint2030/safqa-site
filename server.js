@@ -135,6 +135,14 @@ function openReportCount(listingId) {
   return db.prepare("SELECT COUNT(*) AS c FROM reports WHERE listing_id = ? AND status = 'open'").get(listingId).c;
 }
 
+function unreadMessageCount(userId) {
+  return db.prepare(`
+    SELECT COUNT(*) AS c FROM messages m
+    JOIN conversations c ON c.id = m.conversation_id
+    WHERE (c.buyer_id = ? OR c.seller_id = ?) AND m.sender_id != ? AND m.read_at IS NULL
+  `).get(userId, userId, userId).c;
+}
+
 function saveBase64Images(listingId, imagesB64) {
   if (!imagesB64) return;
   let arr;
@@ -629,6 +637,125 @@ async function handleSellerPage(req, res, viewer, sellerId) {
   send(res, 200, pages.sellerPage({ user: viewer, seller, listings, ratingSummary, ratings }));
 }
 
+async function handleStartConversation(req, res, user, listingId) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(listingId);
+  if (!listing) { send(res, 404, 'الإعلان غير موجود'); return; }
+  if (listing.user_id === user.id) { redirect(res, `/listing/${listingId}`); return; }
+
+  const body = parseUrlEncoded(await readBody(req));
+  const text = (body.body || '').trim().slice(0, 2000);
+  if (!text) { redirect(res, `/listing/${listingId}`); return; }
+
+  let convo = db.prepare('SELECT * FROM conversations WHERE listing_id = ? AND buyer_id = ?').get(listingId, user.id);
+  if (!convo) {
+    const info = db.prepare('INSERT INTO conversations (listing_id, buyer_id, seller_id) VALUES (?, ?, ?)')
+      .run(listingId, user.id, listing.user_id);
+    convo = { id: info.lastInsertRowid };
+  }
+  db.prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)').run(convo.id, user.id, text);
+  redirect(res, `/messages/${convo.id}`);
+}
+
+async function handleMessagesInbox(req, res, user) {
+  if (!user) { redirect(res, '/login'); return; }
+  const rows = db.prepare(`
+    SELECT c.*, l.title AS listing_title, l.id AS listing_id,
+           bu.name AS buyer_name, se.name AS seller_name,
+           (SELECT body FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_body,
+           (SELECT created_at FROM messages WHERE conversation_id = c.id ORDER BY created_at DESC LIMIT 1) AS last_at,
+           (SELECT COUNT(*) FROM messages WHERE conversation_id = c.id AND sender_id != ? AND read_at IS NULL) AS unread
+    FROM conversations c
+    JOIN listings l ON l.id = c.listing_id
+    JOIN users bu ON bu.id = c.buyer_id
+    JOIN users se ON se.id = c.seller_id
+    WHERE c.buyer_id = ? OR c.seller_id = ?
+    ORDER BY last_at DESC
+  `).all(user.id, user.id, user.id);
+  const conversations = rows.map((r) => ({
+    ...r,
+    other_name: r.buyer_id === user.id ? r.seller_name : r.buyer_name,
+    role: r.buyer_id === user.id ? 'buyer' : 'seller',
+  }));
+  send(res, 200, pages.messagesPage({ user, conversations }));
+}
+
+async function handleConversationGet(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const convo = db.prepare(`
+    SELECT c.*, l.title AS listing_title, l.id AS listing_id,
+           bu.name AS buyer_name, se.name AS seller_name
+    FROM conversations c
+    JOIN listings l ON l.id = c.listing_id
+    JOIN users bu ON bu.id = c.buyer_id
+    JOIN users se ON se.id = c.seller_id
+    WHERE c.id = ?
+  `).get(id);
+  if (!convo || (convo.buyer_id !== user.id && convo.seller_id !== user.id)) { send(res, 403, 'غير مصرح'); return; }
+
+  db.prepare('UPDATE messages SET read_at = datetime(\'now\') WHERE conversation_id = ? AND sender_id != ? AND read_at IS NULL').run(id, user.id);
+
+  const messages = db.prepare('SELECT m.*, u.name AS sender_name FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.conversation_id = ? ORDER BY m.created_at ASC').all(id);
+  const otherName = convo.buyer_id === user.id ? convo.seller_name : convo.buyer_name;
+  send(res, 200, pages.conversationPage({ user, convo, messages, otherName }));
+}
+
+async function handleMessageReplyPost(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const convo = db.prepare('SELECT * FROM conversations WHERE id = ?').get(id);
+  if (!convo || (convo.buyer_id !== user.id && convo.seller_id !== user.id)) { send(res, 403, 'غير مصرح'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const text = (body.body || '').trim().slice(0, 2000);
+  if (text) {
+    db.prepare('INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)').run(id, user.id, text);
+  }
+  redirect(res, `/messages/${id}`);
+}
+
+async function handleListingEditGet(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(id);
+  if (!listing || listing.user_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+  listing.extra = parseExtraFields(listing.extra_fields);
+  send(res, 200, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: null, editing: listing, images: listingImages(id) }));
+}
+
+async function handleListingEditPost(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(id);
+  if (!listing || listing.user_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+
+  const body = parseUrlEncoded(await readBody(req));
+  const title = (body.title || '').trim();
+  const description = body.description || '';
+  const price = (body.price || '').trim() || 'حسب الاتفاق';
+  const city = body.city || CITIES[0];
+  const phone = (body.phone || '').trim();
+
+  if (!title || !phone) {
+    listing.extra = parseExtraFields(listing.extra_fields);
+    send(res, 400, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: 'الرجاء تعبئة العنوان ورقم التواصل على الأقل.', editing: listing, images: listingImages(id) }));
+    return;
+  }
+
+  const catRow = db.prepare('SELECT slug FROM categories WHERE id = ?').get(listing.category_id);
+  const schema = (catRow && CATEGORY_FIELDS[catRow.slug]) || [];
+  const extra = {};
+  schema.forEach((f) => {
+    const v = (body['f_' + f.key] || '').toString().trim();
+    if (v) extra[f.key] = v;
+  });
+  const extraJson = Object.keys(extra).length ? JSON.stringify(extra) : null;
+  const priceValue = parsePriceValue(price);
+
+  db.prepare('UPDATE listings SET title = ?, description = ?, price = ?, city = ?, phone = ?, extra_fields = ?, price_value = ? WHERE id = ?')
+    .run(title, description, price, city, phone, extraJson, priceValue, id);
+
+  saveBase64Images(id, body.images_b64);
+
+  redirect(res, `/listing/${id}`);
+}
+
 async function handleAdminFeature(req, res, user, id, featured) {
   if (!user) { redirect(res, '/login'); return; }
   if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
@@ -785,6 +912,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     const user = getCurrentUser(req);
+    if (user) user.unreadMessages = unreadMessageCount(user.id);
     const m = req.method;
     const baseUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host;
 
@@ -802,6 +930,12 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/listing\/\d+\/rate$/) && m === 'POST') return handleRatingPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/report$/) && m === 'POST') return handleReportPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/renew$/) && m === 'POST') return handleRenewListing(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/edit$/) && m === 'GET') return handleListingEditGet(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/edit$/) && m === 'POST') return handleListingEditPost(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/message$/) && m === 'POST') return handleStartConversation(req, res, user, pathname.split('/')[2]);
+    if (pathname === '/messages' && m === 'GET') return handleMessagesInbox(req, res, user);
+    if (pathname.match(/^\/messages\/\d+$/) && m === 'GET') return handleConversationGet(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/messages\/\d+$/) && m === 'POST') return handleMessageReplyPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/seller\/\d+$/) && m === 'GET') return handleSellerPage(req, res, user, pathname.split('/')[2]);
     if (pathname === '/login' && m === 'GET') return handleLoginGet(req, res, user, null);
     if (pathname === '/login' && m === 'POST') return handleLoginPost(req, res);
