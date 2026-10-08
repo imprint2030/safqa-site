@@ -28,6 +28,7 @@ function daysLeft(expiresAt) {
 }
 
 function listingStatusPill(listing) {
+  if (listing.status === 'sold') return `<span class="status-pill" style="background:#E6F1EC;color:#1E7A46;">مباع</span>`;
   if (listing.status === 'hidden') return `<span class="status-pill" style="background:#FBE7E3;color:#B23A2E;">مخفي (بلاغات)</span>`;
   if (listing.status === 'expired') return `<span class="status-pill" style="background:#F1E7D8;color:#8a6d1f;">منتهي</span>`;
   const left = daysLeft(listing.expires_at);
@@ -368,6 +369,11 @@ function listingPage({ user, listing, images, owner, highestBid, myBid, isFavori
           </form>`}
         </div>
       </div>` : ''}
+      ${owner && listing.status === 'active' ? `
+      <form method="post" action="/listing/${listing.id}/mark-sold" onsubmit="var p = prompt('أدخل السعر الفعلي الذي تم البيع به (ر.ي) — سيُحسب منه 1% كعمولة للموقع:'); if (!p || isNaN(parseFloat(p.replace(/,/g,'')))) { return false; } this.sold_price.value = p.replace(/,/g,''); return true;">
+        <input type="hidden" name="sold_price">
+        <button type="submit" class="btn-primary" style="width:100%;background:#1E7A46;border-color:#1E7A46;">تحديد الإعلان كمباع</button>
+      </form>` : ''}
       ${owner ? `
       <div style="display:flex;gap:10px;">
         <a href="/listing/${listing.id}/edit" class="btn-outline" style="flex-grow:1;text-align:center;">تعديل الإعلان</a>
@@ -657,7 +663,7 @@ function signupPage({ user, error, cities }) {
         </div>
         <input type="hidden" name="method" id="methodField" value="phone">
         <label style="display:flex;align-items:flex-start;gap:8px;font-size:11.5px;color:var(--text-2);line-height:1.6;margin-top:14px;">
-          <input type="checkbox" required style="margin-top:2px;">
+          <input type="checkbox" name="terms_agree" required style="margin-top:2px;">
           <span>أوافق على <a href="/terms" target="_blank" style="color:var(--accent);font-weight:700;">شروط الاستخدام</a> و<a href="/privacy" target="_blank" style="color:var(--accent);font-weight:700;">سياسة الخصوصية</a> الخاصة بصفقة</span>
         </label>
         <button type="submit" class="btn-primary" style="width:100%;margin-top:16px;">إنشاء الحساب</button>
@@ -737,7 +743,7 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error, edit
         <textarea name="description" placeholder="اكتب وصفًا واضحًا يشمل الحالة والمواصفات...">${esc(editing ? editing.description : '')}</textarea>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-        <div class="field"><label>السعر (ر.ي)</label><input type="text" name="price" placeholder="0" value="${esc(editing ? editing.price : '')}"></div>
+        <div class="field"><label>السعر (ر.ي)</label><input type="text" name="price" id="priceInput" placeholder="0" value="${esc(editing ? editing.price : '')}"></div>
         <div class="field"><label>المحافظة</label><select name="city">${cityOptions}</select></div>
       </div>
       <div class="field">
@@ -757,8 +763,21 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error, edit
         <span class="hint">الصور تُحفظ مباشرة على الخادم عند النشر (بحد أقصى 3 صور، أقل من 1 ميجابايت لكل صورة، للحفاظ على سرعة النموذج التجريبي)</span>
       </div>
       <input type="hidden" name="images_b64" id="imagesField">
+      ${!editing ? `
+      <div class="card" style="background:#FBF6EE;border:1.5px solid #D9A62B;gap:12px;">
+        <span style="font-size:14px;font-weight:800;display:flex;align-items:center;gap:8px;">${icons.info} القسم والتعهد بعمولة الموقع</span>
+        <p style="margin:0;font-size:13.5px;line-height:2;color:var(--text);">أقسم بالله العلي العظيم، وأتعهد أمام الله ثم إدارة الموقع، أن ألتزم بدفع عمولة الموقع البالغة (1%) من قيمة السعر الفعلي لبيع السلعة في حال تم بيعها عن طريق هذا الإعلان، وأن لا أتهرب أو أتحايل على دفعها، والله على ما أقول شهيد.</p>
+        <div style="background:#fff;border:1px solid #EADFC8;border-radius:10px;padding:10px 14px;font-size:12.5px;color:var(--text-2);">
+          مثال: إذا بعت السلعة بـ <strong id="commExamplePrice">1,000</strong> ريال، فعمولة الموقع هي <strong id="commExampleFee" style="color:var(--price);">10</strong> ريال فقط (1%).
+        </div>
+        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;font-size:13.5px;font-weight:700;">
+          <input type="checkbox" name="commission_agree" id="commissionAgree" style="margin-top:3px;width:18px;height:18px;flex-shrink:0;">
+          <span>أقسم بالله وأوافق على الشروط أعلاه، وأتعهد بدفع العمولة عند بيع السلعة عبر هذا الإعلان.</span>
+        </label>
+        <a href="/commission-payment" target="_blank" style="font-size:12px;color:var(--accent);font-weight:700;">كيف تُدفع العمولة؟ اطّلع على حسابات التحويل ←</a>
+      </div>` : ''}
       <div style="display:flex;gap:12px;">
-        <button type="submit" class="btn-primary" style="flex-grow:1;">${editing ? 'حفظ التعديلات' : 'نشر الإعلان'}</button>
+        <button type="submit" id="submitAdBtn" class="btn-primary" style="flex-grow:1;"${!editing ? ' disabled' : ''}>${editing ? 'حفظ التعديلات' : 'تأكيد القسم ونشر الإعلان'}</button>
         <a href="${editing ? `/listing/${editing.id}` : '/'}" class="btn-outline">إلغاء</a>
       </div>
     </form>
@@ -774,6 +793,29 @@ function postAdPage({ user, categories, cities, categoryFields = {}, error, edit
       select.addEventListener('change', sync);
       sync();
     })();
+
+    (function () {
+      var checkbox = document.getElementById('commissionAgree');
+      var submitBtn = document.getElementById('submitAdBtn');
+      if (checkbox && submitBtn) {
+        checkbox.addEventListener('change', function () {
+          submitBtn.disabled = !checkbox.checked;
+        });
+      }
+      var priceInput = document.getElementById('priceInput');
+      var exPrice = document.getElementById('commExamplePrice');
+      var exFee = document.getElementById('commExampleFee');
+      if (priceInput && exPrice && exFee) {
+        priceInput.addEventListener('input', function () {
+          var digits = priceInput.value.replace(/[^\\d.]/g, '');
+          var n = parseFloat(digits);
+          if (!n || n <= 0) { exPrice.textContent = '1,000'; exFee.textContent = '10'; return; }
+          exPrice.textContent = n.toLocaleString('ar');
+          exFee.textContent = Math.round(n * 0.01 * 100) / 100;
+        });
+      }
+    })();
+
     var dropZone = document.getElementById('dropZone');
     var input = document.getElementById('imgInput');
     var previews = document.getElementById('previews');
@@ -1057,13 +1099,18 @@ function dashboardPage({ user, listings, stats }) {
       <div class="thumb">${l.thumb ? `<img src="${esc(l.thumb)}">` : ''}</div>
       <div class="info">
         <a href="/listing/${l.id}">${esc(l.title)}</a>
-        <span class="sub">${moneyOrText(l.price)} · ${esc(l.city)}</span>
+        <span class="sub">${l.status === 'sold' ? `بيع بـ ${Number(l.sold_price).toLocaleString('ar')} ر.ي — عمولة ${l.commission_paid ? 'مدفوعة' : 'مستحقة'}: ${l.commission_amount} ر.ي${!l.commission_paid ? ` — <a href="/commission-payment" target="_blank" style="color:var(--accent);font-weight:700;">ادفعها الآن ←</a>` : ''}` : `${moneyOrText(l.price)} · ${esc(l.city)}`}</span>
       </div>
       ${listingStatusPill(l)}
       <span class="views">${l.views} مشاهدة</span>
       ${l.status === 'expired' || (daysLeft(l.expires_at) !== null && daysLeft(l.expires_at) <= 5)
         ? `<form method="post" action="/listing/${l.id}/renew"><button class="btn-mini" style="background:#1A73E8;color:#fff;">تجديد الإعلان</button></form>`
         : ''}
+      ${l.status === 'active' ? `
+      <form method="post" action="/listing/${l.id}/mark-sold" onsubmit="var p = prompt('أدخل السعر الفعلي الذي تم البيع به (ر.ي) — سيُحسب منه 1% كعمولة للموقع:'); if (!p || isNaN(parseFloat(p.replace(/,/g,'')))) { return false; } this.sold_price.value = p.replace(/,/g,''); return true;">
+        <input type="hidden" name="sold_price">
+        <button type="submit" class="btn-mini" style="background:#1E7A46;color:#fff;">تحديد كمباع</button>
+      </form>` : ''}
       <a href="/listing/${l.id}/edit" class="btn-mini" style="text-decoration:none;display:inline-flex;align-items:center;">تعديل</a>
       <form method="post" action="/listing/${l.id}/delete" onsubmit="return confirm('هل تريد حذف هذا الإعلان؟');">
         <button class="btn-mini danger">حذف</button>
@@ -1096,7 +1143,7 @@ function dashboardPage({ user, listings, stats }) {
   return page({ title: 'لوحة التحكم', user, body });
 }
 
-function adminPage({ user, stats, listings, users, resetInfo, reports = [], reportReasons = {} }) {
+function adminPage({ user, stats, listings, users, resetInfo, reports = [], reportReasons = {}, commissions = [], commissionStats = { dueCount: 0, dueTotal: 0 } }) {
   const listingRows = listings.length ? listings.map((l) => `
     <div class="ad-row">
       <div class="thumb">${l.thumb ? `<img src="${esc(l.thumb)}">` : ''}</div>
@@ -1147,6 +1194,16 @@ function adminPage({ user, stats, listings, users, resetInfo, reports = [], repo
       </form>`}
     </div>`).join('') : '';
 
+  const commissionRows = commissions.length ? commissions.map((c) => `
+    <div class="ad-row">
+      <div class="info" style="flex-grow:1;">
+        <a href="/listing/${c.id}">${esc(c.title)}</a>
+        <span class="sub">${esc(c.owner_name)} · ${esc(c.owner_phone || '')} · بيع بـ ${Number(c.sold_price).toLocaleString('ar')} ر.ي · بتاريخ ${esc((c.sold_at || '').slice(0, 10))}</span>
+      </div>
+      <span class="status-pill" style="background:${c.commission_paid ? '#E6F1EC' : '#FBF0D8'};color:${c.commission_paid ? '#1E7A46' : '#8a6d1f'};">عمولة: ${c.commission_amount} ر.ي ${c.commission_paid ? '(مدفوعة)' : '(مستحقة)'}</span>
+      ${!c.commission_paid ? `<form method="post" action="/admin/listing/${c.id}/commission-paid"><button class="btn-mini" style="background:#1E7A46;color:#fff;">تحديد كمدفوعة</button></form>` : ''}
+    </div>`).join('') : emptyState('emptyBox', 'لا توجد إعلانات مباعة بعد.');
+
   const resetBanner = resetInfo ? `
   <div class="warn-box" style="background:#E6F1EC;border-color:#1A73E8;color:#124C8A;">
     ${icons.info}
@@ -1172,10 +1229,15 @@ function adminPage({ user, stats, listings, users, resetInfo, reports = [], repo
         <div class="stat-card"><span class="label">إجمالي الإعلانات</span><span class="val">${stats.listings}</span></div>
         <div class="stat-card"><span class="label">إعلانات نشطة</span><span class="val">${stats.activeListings}</span></div>
         <div class="stat-card"><span class="label">مجموع المشاهدات</span><span class="val">${stats.views}</span></div>
+        <div class="stat-card"><span class="label">عمولات مستحقة</span><span class="val">${commissionStats.dueTotal} ر.ي</span></div>
       </div>
       <div class="my-ads">
         <div class="head"><span>بلاغات مفتوحة (${reports.length})${reports.length ? ` <span style="color:#B23A2E;">${icons.flag}</span>` : ''}</span></div>
         ${reportRows}
+      </div>
+      <div class="my-ads">
+        <div class="head"><span>عمولات المبيعات (${commissions.length})${commissionStats.dueCount ? ` — ${commissionStats.dueCount} مستحقة` : ''}</span></div>
+        ${commissionRows}
       </div>
       <div class="my-ads">
         <div class="head"><span>كل الإعلانات (${listings.length})</span></div>
@@ -1234,6 +1296,51 @@ function contactPage({ user }) {
   });
 }
 
+function commissionPaymentPage({ user, methods = [], rate = 0.01 }) {
+  const bankCards = methods.map((m) => `
+    <div class="card" style="gap:12px;">
+      <span style="font-size:15px;font-weight:800;">${esc(m.name)}</span>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        ${m.accounts.map((a, i) => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--chip);border-radius:10px;padding:10px 14px;">
+          <div>
+            <div style="font-size:12px;color:var(--text-2);">${esc(a.label)}</div>
+            <div style="font-size:16px;font-weight:800;letter-spacing:0.5px;" dir="ltr" id="acc-${esc(m.name)}-${i}">${esc(a.number)}</div>
+          </div>
+          <button type="button" class="btn-mini copy-acc-btn" data-target="acc-${esc(m.name)}-${i}">${icons.link} نسخ</button>
+        </div>`).join('')}
+      </div>
+    </div>`).join('');
+
+  const body = `
+  ${header(user)}
+  <div class="zigzag" style="height:8px;"></div>
+  <div class="container" style="max-width:720px;padding-top:32px;padding-bottom:56px;display:flex;flex-direction:column;gap:20px;">
+    <div>
+      <h1 style="margin:0 0 6px;font-size:22px;font-weight:800;">طريقة دفع عمولة الموقع</h1>
+      <p style="margin:0;font-size:13.5px;color:var(--text-2);line-height:1.9;">بعد بيع سلعتك عبر صفقة وتحديد الإعلان كـ"مباع"، تُحسب عمولة الموقع تلقائيًا (${Math.round(rate * 100)}% من سعر البيع الفعلي). حوّل مبلغ العمولة إلى أحد الحسابات التالية، ثم تواصل معنا من <a href="/contact" style="color:var(--accent);font-weight:700;">صفحة اتصل بنا</a> لتأكيد الدفع.</p>
+    </div>
+    ${bankCards}
+    <div class="warn-box">${icons.info}<p style="margin:0;">سيتم إضافة بنوك ومحافظ إلكترونية رسمية أخرى قريبًا إن شاء الله (بنك اليمن الدولي، بنك سبأ الإسلامي، بنك اليمن والكويت، بنك القاسمي، محفظة ون كاش، وغيرها). تابع هذه الصفحة للتحديثات.</p></div>
+  </div>
+  <script>
+    document.querySelectorAll('.copy-acc-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var el = document.getElementById(btn.getAttribute('data-target'));
+        if (!el) return;
+        navigator.clipboard.writeText(el.textContent.trim()).then(function () {
+          var original = btn.innerHTML;
+          btn.textContent = 'تم النسخ ✓';
+          setTimeout(function () { btn.innerHTML = original; }, 1500);
+        }).catch(function () {});
+      });
+    });
+  </script>
+  ${footer()}
+  `;
+  return page({ title: 'طريقة دفع العمولة', user, body });
+}
+
 function termsPage({ user }) {
   return staticPage({
     user,
@@ -1266,4 +1373,4 @@ function privacyPage({ user }) {
   });
 }
 
-module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage, sellerPage, messagesPage, conversationPage };
+module.exports = { homePage, categoryPage, listingPage, loginPage, signupPage, postAdPage, dashboardPage, settingsPage, adminPage, aboutPage, contactPage, termsPage, privacyPage, searchPage, forgotPasswordPage, sellerPage, messagesPage, conversationPage, commissionPaymentPage };

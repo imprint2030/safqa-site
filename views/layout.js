@@ -87,6 +87,7 @@ function footer() {
         <h5>الشركة</h5>
         <a href="/about">من نحن</a>
         <a href="/contact">اتصل بنا</a>
+        <a href="/commission-payment">طريقة دفع العمولة</a>
         <a href="/terms">الشروط والأحكام</a>
         <a href="/privacy">سياسة الخصوصية</a>
       </div>
