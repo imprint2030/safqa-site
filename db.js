@@ -150,9 +150,24 @@ try {
   if (!lnames.includes('extra_fields')) db.exec("ALTER TABLE listings ADD COLUMN extra_fields TEXT");
   if (!lnames.includes('price_value')) db.exec("ALTER TABLE listings ADD COLUMN price_value REAL");
   if (!lnames.includes('expires_at')) db.exec("ALTER TABLE listings ADD COLUMN expires_at TEXT");
+  if (!lnames.includes('commission_agreed')) db.exec("ALTER TABLE listings ADD COLUMN commission_agreed INTEGER NOT NULL DEFAULT 0");
+  if (!lnames.includes('sold_price')) db.exec("ALTER TABLE listings ADD COLUMN sold_price REAL");
+  if (!lnames.includes('commission_amount')) db.exec("ALTER TABLE listings ADD COLUMN commission_amount REAL");
+  if (!lnames.includes('commission_paid')) db.exec("ALTER TABLE listings ADD COLUMN commission_paid INTEGER NOT NULL DEFAULT 0");
+  if (!lnames.includes('sold_at')) db.exec("ALTER TABLE listings ADD COLUMN sold_at TEXT");
 } catch (e) {
   // تجاهل
 }
+
+try {
+  const ucols = db.prepare("PRAGMA table_info(users)").all();
+  const unames = ucols.map((c) => c.name);
+  if (!unames.includes('terms_agreed_at')) db.exec("ALTER TABLE users ADD COLUMN terms_agreed_at TEXT");
+} catch (e) {
+  // تجاهل
+}
+
+const COMMISSION_RATE = 0.01; // عمولة الموقع: 1% من سعر البيع الفعلي
 
 const LISTING_LIFETIME_DAYS = 30;
 
@@ -167,6 +182,17 @@ function expireOldListings() {
 }
 
 const CITIES = ['صنعاء', 'عدن', 'تعز', 'الحديدة', 'إب', 'مأرب', 'حضرموت', 'ذمار'];
+
+// طرق دفع عمولة الموقع — عدّل أو أضف بنوكًا/محافظ جديدة هنا لاحقًا (كل بنك عبارة عن كائن بالشكل التالي)
+const COMMISSION_PAYMENT_METHODS = [
+  {
+    name: 'بنك الكريمي للتمويل الأصغر الإسلامي',
+    accounts: [
+      { label: 'حساب بالريال اليمني', number: '3009850634' },
+      { label: 'حساب بالريال السعودي', number: '3025373382' },
+    ],
+  },
+];
 
 const CATEGORIES = [
   { name: 'سيارات', slug: 'cars', icon: 'car' },
@@ -367,4 +393,4 @@ function seed() {
 
 seed();
 
-module.exports = { db, CITIES, CATEGORIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS };
+module.exports = { db, CITIES, CATEGORIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS, COMMISSION_RATE, COMMISSION_PAYMENT_METHODS };

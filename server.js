@@ -4,7 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { URL } = require('url');
 
-const { db, CITIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS } = require('./db');
+const { db, CITIES, CATEGORY_FIELDS, hashPassword, verifyPassword, parsePriceValue, expireOldListings, LISTING_LIFETIME_DAYS, COMMISSION_RATE, COMMISSION_PAYMENT_METHODS } = require('./db');
 const { createSession, destroySession, getUserFromSession, parseCookies } = require('./auth');
 const { timeAgo, parseUrlEncoded } = require('./utils');
 const pages = require('./views/pages');
@@ -64,12 +64,40 @@ function getCurrentUser(req) {
   return getUserFromSession(cookies.sid);
 }
 
-function sessionCookie(sid) {
-  return `sid=${sid}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 30}; SameSite=Lax`;
+function sessionCookie(sid, secure) {
+  return `sid=${sid}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 30}; SameSite=Lax${secure ? '; Secure' : ''}`;
 }
 
 function clearCookie() {
   return 'sid=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax';
+}
+
+function getClientIp(req) {
+  const fwd = req.headers['x-forwarded-for'];
+  if (fwd) return fwd.split(',')[0].trim();
+  return req.socket.remoteAddress || 'unknown';
+}
+
+// حماية بسيطة من محاولات تخمين كلمة المرور (brute-force) — تُحفظ في الذاكرة فقط
+const LOGIN_ATTEMPT_LIMIT = 8;
+const LOGIN_ATTEMPT_WINDOW_MS = 15 * 60 * 1000;
+const loginAttempts = new Map(); // ip -> [timestamps]
+
+function tooManyLoginAttempts(ip) {
+  const now = Date.now();
+  const arr = (loginAttempts.get(ip) || []).filter((t) => now - t < LOGIN_ATTEMPT_WINDOW_MS);
+  loginAttempts.set(ip, arr);
+  return arr.length >= LOGIN_ATTEMPT_LIMIT;
+}
+
+function recordFailedLogin(ip) {
+  const arr = loginAttempts.get(ip) || [];
+  arr.push(Date.now());
+  loginAttempts.set(ip, arr);
+}
+
+function clearLoginAttempts(ip) {
+  loginAttempts.delete(ip);
 }
 
 // ---------- data helpers ----------
@@ -273,6 +301,12 @@ async function handleLoginGet(req, res, user, error) {
 }
 
 async function handleLoginPost(req, res) {
+  const ip = getClientIp(req);
+  if (tooManyLoginAttempts(ip)) {
+    send(res, 429, pages.loginPage({ user: null, error: 'عدد محاولات تسجيل الدخول كبير جدًا. الرجاء الانتظار بضع دقائق قبل المحاولة مجددًا.' }));
+    return;
+  }
+
   const body = parseUrlEncoded(await readBody(req));
   const method = body.method === 'email' ? 'email' : 'phone';
   const identifier = method === 'email' ? (body.identifier_email || '').trim() : (body.identifier_phone || '').trim();
@@ -286,12 +320,15 @@ async function handleLoginPost(req, res) {
   }
 
   if (!row || !verifyPassword(password, row.password_hash)) {
+    recordFailedLogin(ip);
     send(res, 401, pages.loginPage({ user: null, error: 'بيانات الدخول غير صحيحة. تحقق من الرقم/البريد وكلمة المرور.' }));
     return;
   }
 
+  clearLoginAttempts(ip);
+  const secure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
   const sid = createSession(row.id);
-  redirect(res, '/dashboard', sessionCookie(sid));
+  redirect(res, '/dashboard', sessionCookie(sid, secure));
 }
 
 async function handleForgotPasswordGet(req, res, user) {
@@ -317,9 +354,14 @@ async function handleSignupPost(req, res) {
   const email = method === 'email' ? (body.email || '').trim() : '';
   const password = body.password || '';
   const city = body.city || CITIES[0];
+  const termsAgreed = body.terms_agree === 'on';
 
   if (!name || password.length < 6 || (!phone && !email)) {
     send(res, 400, pages.signupPage({ user: null, error: 'تحقق من تعبئة جميع الحقول، وأن تكون كلمة المرور 6 أحرف على الأقل.', cities: CITIES }));
+    return;
+  }
+  if (!termsAgreed) {
+    send(res, 400, pages.signupPage({ user: null, error: 'يجب الموافقة على الشروط والأحكام لإنشاء حساب.', cities: CITIES }));
     return;
   }
 
@@ -331,10 +373,11 @@ async function handleSignupPost(req, res) {
     return;
   }
 
-  const info = db.prepare('INSERT INTO users (name, phone, email, password_hash, city) VALUES (?, ?, ?, ?, ?)')
+  const info = db.prepare("INSERT INTO users (name, phone, email, password_hash, city, terms_agreed_at) VALUES (?, ?, ?, ?, ?, datetime('now'))")
     .run(name, phone || null, email || null, hashPassword(password), city);
+  const secure = (req.headers['x-forwarded-proto'] || 'http') === 'https';
   const sid = createSession(info.lastInsertRowid);
-  redirect(res, '/dashboard', sessionCookie(sid));
+  redirect(res, '/dashboard', sessionCookie(sid, secure));
 }
 
 async function handleLogoutPost(req, res) {
@@ -358,8 +401,14 @@ async function handlePostAdPost(req, res, user) {
   const city = body.city || CITIES[0];
   const phone = (body.phone || '').trim();
 
+  const commissionAgreed = body.commission_agree === 'on';
+
   if (!title || !categoryId || !phone) {
     send(res, 400, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: 'الرجاء تعبئة الفئة والعنوان ورقم التواصل على الأقل.' }));
+    return;
+  }
+  if (!commissionAgreed) {
+    send(res, 400, pages.postAdPage({ user, categories: categoryList(), cities: CITIES, categoryFields: CATEGORY_FIELDS, error: 'يجب تأكيد القسم والموافقة على شروط العمولة قبل نشر الإعلان.' }));
     return;
   }
 
@@ -380,8 +429,8 @@ async function handlePostAdPost(req, res, user) {
   const priceValue = parsePriceValue(price);
 
   const info = db.prepare(`
-    INSERT INTO listings (user_id, category_id, title, description, price, city, phone, extra_fields, price_value, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+${LISTING_LIFETIME_DAYS} days'))
+    INSERT INTO listings (user_id, category_id, title, description, price, city, phone, extra_fields, price_value, expires_at, commission_agreed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '+${LISTING_LIFETIME_DAYS} days'), 1)
   `).run(user.id, categoryId, title, description, price, city, phone, extraJson, priceValue);
 
   saveBase64Images(info.lastInsertRowid, body.images_b64);
@@ -628,6 +677,19 @@ async function handleRenewListing(req, res, user, id) {
   redirect(res, '/dashboard');
 }
 
+async function handleMarkSold(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  const listing = db.prepare('SELECT * FROM listings WHERE id = ?').get(id);
+  if (!listing || listing.user_id !== user.id) { send(res, 403, 'غير مصرح'); return; }
+  const body = parseUrlEncoded(await readBody(req));
+  const soldPrice = parseFloat((body.sold_price || '').toString().replace(/,/g, ''));
+  if (!soldPrice || soldPrice <= 0) { redirect(res, '/dashboard'); return; }
+  const commission = Math.round(soldPrice * COMMISSION_RATE * 100) / 100;
+  db.prepare("UPDATE listings SET status = 'sold', sold_price = ?, commission_amount = ?, sold_at = datetime('now') WHERE id = ?")
+    .run(soldPrice, commission, id);
+  redirect(res, '/dashboard');
+}
+
 async function handleSellerPage(req, res, viewer, sellerId) {
   const seller = db.prepare(`SELECT id, name, city, created_at FROM users WHERE id = ?`).get(sellerId);
   if (!seller) { send(res, 404, 'هذا البائع غير موجود'); return; }
@@ -815,7 +877,19 @@ function renderAdminPage(res, user, resetInfo) {
     ORDER BY r.created_at DESC
   `).all();
 
-  send(res, 200, pages.adminPage({ user, stats, listings, users, resetInfo, reports, reportReasons: REPORT_REASONS }));
+  const commissions = db.prepare(`
+    SELECT l.id, l.title, l.sold_price, l.commission_amount, l.commission_paid, l.sold_at, u.name AS owner_name, u.phone AS owner_phone
+    FROM listings l
+    JOIN users u ON u.id = l.user_id
+    WHERE l.status = 'sold'
+    ORDER BY l.commission_paid ASC, l.sold_at DESC
+  `).all();
+  const commissionStats = {
+    dueCount: commissions.filter((c) => !c.commission_paid).length,
+    dueTotal: commissions.filter((c) => !c.commission_paid).reduce((s, c) => s + (c.commission_amount || 0), 0),
+  };
+
+  send(res, 200, pages.adminPage({ user, stats, listings, users, resetInfo, reports, reportReasons: REPORT_REASONS, commissions, commissionStats }));
 }
 
 async function handleAdminGet(req, res, user) {
@@ -873,6 +947,13 @@ async function handleAdminDeleteUser(req, res, user, id) {
   redirect(res, '/admin');
 }
 
+async function handleAdminMarkCommissionPaid(req, res, user, id) {
+  if (!user) { redirect(res, '/login'); return; }
+  if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
+  db.prepare('UPDATE listings SET commission_paid = 1 WHERE id = ?').run(id);
+  redirect(res, '/admin');
+}
+
 async function handleAdminReportDismiss(req, res, user, id) {
   if (!user) { redirect(res, '/login'); return; }
   if (!user.is_admin) { send(res, 403, 'غير مصرح'); return; }
@@ -917,8 +998,24 @@ const server = http.createServer(async (req, res) => {
     const baseUrl = (req.headers['x-forwarded-proto'] || 'http') + '://' + req.headers.host;
 
     if (pathname === '/' && m === 'GET') return handleHome(req, res, user, baseUrl);
+    if (pathname === '/robots.txt' && m === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end(`User-agent: *\nAllow: /\nSitemap: ${baseUrl}/sitemap.xml\n`);
+      return;
+    }
+    if (pathname === '/sitemap.xml' && m === 'GET') {
+      const staticUrls = ['/', '/about', '/contact', '/commission-payment', '/terms', '/privacy', '/search']
+        .map((p) => `<url><loc>${baseUrl}${p}</loc></url>`).join('');
+      const catUrls = categoryList().map((c) => `<url><loc>${baseUrl}/category/${c.slug}</loc></url>`).join('');
+      const listingRows = db.prepare("SELECT id FROM listings WHERE status = 'active' ORDER BY created_at DESC LIMIT 2000").all();
+      const listingUrls = listingRows.map((r) => `<url><loc>${baseUrl}/listing/${r.id}</loc></url>`).join('');
+      res.writeHead(200, { 'Content-Type': 'application/xml; charset=utf-8' });
+      res.end(`<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${staticUrls}${catUrls}${listingUrls}</urlset>`);
+      return;
+    }
     if (pathname === '/about' && m === 'GET') return send(res, 200, pages.aboutPage({ user }));
     if (pathname === '/contact' && m === 'GET') return send(res, 200, pages.contactPage({ user }));
+    if (pathname === '/commission-payment' && m === 'GET') return send(res, 200, pages.commissionPaymentPage({ user, methods: COMMISSION_PAYMENT_METHODS, rate: COMMISSION_RATE }));
     if (pathname === '/terms' && m === 'GET') return send(res, 200, pages.termsPage({ user }));
     if (pathname === '/privacy' && m === 'GET') return send(res, 200, pages.privacyPage({ user }));
     if (pathname === '/search' && m === 'GET') return handleSearch(req, res, user, fullUrl.searchParams);
@@ -930,6 +1027,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/listing\/\d+\/rate$/) && m === 'POST') return handleRatingPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/report$/) && m === 'POST') return handleReportPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/renew$/) && m === 'POST') return handleRenewListing(req, res, user, pathname.split('/')[2]);
+    if (pathname.match(/^\/listing\/\d+\/mark-sold$/) && m === 'POST') return handleMarkSold(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/edit$/) && m === 'GET') return handleListingEditGet(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/edit$/) && m === 'POST') return handleListingEditPost(req, res, user, pathname.split('/')[2]);
     if (pathname.match(/^\/listing\/\d+\/message$/) && m === 'POST') return handleStartConversation(req, res, user, pathname.split('/')[2]);
@@ -964,6 +1062,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname.match(/^\/admin\/user\/\d+\/unverify$/) && m === 'POST') return handleAdminVerifyUser(req, res, user, pathname.split('/')[3], false);
     if (pathname.match(/^\/admin\/user\/\d+\/reset-password$/) && m === 'POST') return handleAdminResetPassword(req, res, user, pathname.split('/')[3]);
     if (pathname.match(/^\/admin\/report\/\d+\/dismiss$/) && m === 'POST') return handleAdminReportDismiss(req, res, user, pathname.split('/')[3]);
+    if (pathname.match(/^\/admin\/listing\/\d+\/commission-paid$/) && m === 'POST') return handleAdminMarkCommissionPaid(req, res, user, pathname.split('/')[3]);
     if (pathname.match(/^\/admin\/listing\/\d+\/unhide$/) && m === 'POST') return handleAdminUnhideListing(req, res, user, pathname.split('/')[3]);
 
     send(res, 404, 'الصفحة غير موجودة — 404');
